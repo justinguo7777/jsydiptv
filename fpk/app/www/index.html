@@ -375,6 +375,27 @@
   .note{background:var(--bg2);border-left:2.5px solid var(--warn);border-radius:0 6px 6px 0;
         padding:9px 12px;font-size:12.5px;color:var(--fg2);line-height:1.8;margin:12px 0}
 
+  /* 链接卡片（播放器接入页·全部地址） */
+  .sec{font-size:12.5px;font-weight:600;color:var(--fg);margin:16px 0 9px;
+       padding-left:8px;border-left:3px solid var(--accent);line-height:1.3}
+  .sec:first-child{margin-top:0}
+  .lcard{background:var(--bg2);border:1px solid var(--line);border-radius:9px;
+         padding:11px 13px 10px;margin-bottom:9px}
+  .lhead{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  .fname{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;
+         font-weight:600;color:var(--fg)}
+  .tagx{font-size:10.5px;padding:1px 7px;border-radius:9px;background:var(--bg3);
+        color:var(--fg3);white-space:nowrap;font-weight:500}
+  .tagx.rec{background:rgba(64,158,255,.15);color:var(--accent)}
+  .tagx.ori{background:rgba(255,169,64,.16);color:var(--warn)}
+  .lcard .addr input{background:var(--bg3)}
+  .luse{font-size:12.5px;color:var(--fg2);line-height:1.75;margin-top:7px}
+  .luse b{color:var(--fg)}
+  @media(max-width:600px){
+    .luse{font-size:12px}
+    .lhead{flex-wrap:wrap}
+  }
+
   /* 软件介绍页 */
   /* grid-auto-rows:1fr 让所有行等高，避免第一行 117px / 第二行 139px 的错落 */
   .feat{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:11px;
@@ -391,6 +412,9 @@
   .kv .frow{display:flex;gap:8px;padding:5px 0;border-bottom:1px dashed var(--line)}
   .kv .frow:last-child{border-bottom:0}
   .kv .frow .t{flex-shrink:0;width:84px;font-weight:600;color:var(--fg)}
+  /* 播放器接入·按软件选：左列要放得下「电视直播(mytv-android)」等长名，避免折成三行 */
+  .kv-guide .frow .t{width:126px;line-height:1.5;white-space:nowrap}
+  @media(max-width:600px){ .kv-guide .frow .t{width:96px;white-space:normal} }
   .kv .frow .c{flex:1;min-width:0;line-height:1.9}
   .kv code{background:var(--bg3);padding:1px 5px;border-radius:4px;font-size:11.5px}
   .kv b{color:var(--fg);display:inline-block;min-width:86px}
@@ -538,149 +562,153 @@
   <!-- ============ 4. 播放器接入 ============ -->
   <div class="page" id="pg-player" hidden>
     <h2>播放器接入</h2>
-    <div class="sub">在电视或手机播放器里填入下面的地址即可。地址固定不变，内容每天自动更新。</div>
+    <div class="sub">全部输出地址一览。地址固定不变，内容每天自动更新。同一个地址可被多个软件共用，按需复制。</div>
 
     <div class="tabs" id="pTabs">
-      <button class="tab on" data-t="fongmi">FongMi TV</button>
-      <button class="tab" data-t="ku9">酷9 / 电视直播</button>
-      <button class="tab" data-t="tvbox">TVBox / 影视仓</button>
-      <button class="tab" data-t="diyp">DIYP</button>
-      <button class="tab" data-t="kodi">Kodi</button>
-      <button class="tab" data-t="tg">天光云影</button>
+      <button class="tab on" data-t="all">全部地址</button>
+      <button class="tab" data-t="guide">按软件选</button>
+      <button class="tab" data-t="orig">原版清单</button>
     </div>
 
-    <div id="pfongmi" class="ptab">
-      <div class="sec">配置地址（一条地址搞定直播 + 回看 + 节目单）</div>
-      <div class="addr"><input readonly id="u_fongmi" /><button class="btn" data-c="u_fongmi">复制</button></div>
-      <ol class="steps">
-        <li>打开 <b>FongMi TV</b>（5.x）→「设置」→「配置」→「添加配置」</li>
-        <li>粘贴上面的地址并确认，返回首页即可看到全部频道</li>
-        <li>节目单自动按「频道 + 当天」加载，<b>不需要另外填 EPG</b></li>
-      </ol>
-      <div class="note">FongMi 走的是<b>自己的按天 JSON 节目单接口</b>
-        （<code>epg/&lt;频道&gt;/&lt;日期&gt;.json</code>），与 TVBox 的 XMLTV 不通用，两者互不影响。
-        回看占位符用 FongMi 原生 <code>${(b)yyyyMMddHHmmss}</code> 写法。</div>
-      <div class="sec">只要直播，不要节目单</div>
-      <div class="addr"><input readonly id="u_fongmi_m3u" /><button class="btn" data-c="u_fongmi_m3u">复制</button></div>
+    <!-- ============ 全部地址 ============ -->
+    <div id="pall" class="ptab">
+
+      <div class="sec">① 一条搞定（推荐先试这个）</div>
+
+      <div class="lcard">
+        <div class="lhead"><span class="fname">fongmi.json</span><span class="tagx rec">推荐</span></div>
+        <div class="addr"><input readonly id="u_fongmi" /><button class="btn" data-c="u_fongmi">复制</button></div>
+        <div class="luse"><b>FongMi TV</b>（手机/平板/盒子）— 一条配置同时带好直播、回看、节目单，不用另填 EPG。</div>
+      </div>
+
+      <div class="lcard">
+        <div class="lhead"><span class="fname">tvbox.json</span><span class="tagx">配置</span></div>
+        <div class="addr"><input readonly id="u_tvbox" /><button class="btn" data-c="u_tvbox">复制</button></div>
+        <div class="luse"><b>TVBox / 影视仓</b> — 影视库一体，直播是其中一个入口；填「配置地址」即可。</div>
+      </div>
+
+      <div class="sec">② 直播清单 M3U（按回看语法分三种，选错软件会没有回看）</div>
+
+      <div class="lcard">
+        <div class="lhead"><span class="fname">fongmi.m3u</span><span class="tagx">${(b)} 语法</span></div>
+        <div class="addr"><input readonly id="u_ku9" /><button class="btn" data-c="u_ku9">复制</button></div>
+        <div class="luse"><b>FongMi TV</b>（只要直播时）、<b>酷9</b>、<b>电视直播 mytv-android</b> — 这三个的回看变量都是 <code>${(b)yyyyMMddHHmmss}</code>。</div>
+      </div>
+
+      <div class="lcard">
+        <div class="lhead"><span class="fname">iptv.m3u8</span><span class="tagx">{start} 语法</span></div>
+        <div class="addr"><input readonly id="u_diyp" /><button class="btn" data-c="u_diyp">复制</button></div>
+        <div class="luse"><b>DIYP</b>、<b>天光云影</b>、<b>TVBox 直接填 M3U</b>、多数通用播放器/盒子 — 标准回看变量 <code>{start}/{end}</code>。</div>
+      </div>
+
+      <div class="lcard">
+        <div class="lhead"><span class="fname">kodi.m3u</span><span class="tagx">${start} 语法</span></div>
+        <div class="addr"><input readonly id="u_kodi" /><button class="btn" data-c="u_kodi">复制</button></div>
+        <div class="luse"><b>Kodi</b>（PVR IPTV Simple Client 插件专用）— 回看变量是 <code>${start}/${end}</code>，<b>不要</b>和其他软件的混用。</div>
+      </div>
+
+      <div class="sec">③ 节目单 EPG（XMLTV，多个软件共用同一个）</div>
+
+      <div class="lcard">
+        <div class="lhead"><span class="fname">epg.xml</span><span class="tagx">通用 XMLTV</span></div>
+        <div class="addr"><input readonly id="u_epg" /><button class="btn" data-c="u_epg">复制</button></div>
+        <div class="luse"><b>酷9</b>（解析格式需手动改成 XmlTV）、<b>DIYP</b>、<b>Kodi</b>、<b>电视直播</b>、大多数支持 XMLTV 的播放器。<br/>
+          说明：FongMi 与 TVBox 用上面两条「配置地址」时已自带节目单，<b>不必</b>再填这条。</div>
+      </div>
+
+      <div class="sec">④ 数据类文件（不是给播放器填的，供查看/二次开发）</div>
+
+      <div class="lcard">
+        <div class="lhead"><span class="fname">4k.json</span><span class="tagx">数据</span></div>
+        <div class="addr"><input readonly id="u_4k" /><button class="btn" data-c="u_4k">复制</button></div>
+        <div class="luse">全部 4K 频道清单，带实测分辨率与编码（H.264/H.265）。<b>给播放器填不了</b>，用于单独筛选 4K 台或排查设备能否硬解。</div>
+      </div>
+
+      <div class="lcard">
+        <div class="lhead"><span class="fname">channels.json</span><span class="tagx">数据</span></div>
+        <div class="addr"><input readonly id="u_ch" /><button class="btn" data-c="u_ch">复制</button></div>
+        <div class="luse">频道全量索引（分组、台号、当前/下一档节目、多清晰度地址）。<b>给播放器填不了</b>，供自建应用或脚本取用。</div>
+      </div>
+
+      <div class="note">回看语法对不上时，软件能播但<b>回看会失效或报错</b>——遇到这种情况先检查是不是用错了上面三种 M3U 之一。</div>
     </div>
 
-    <!-- 酷9 与「电视直播(mytv-android)」的回看占位符同为 ${(b)}/${(e)}，
-         所以两者共用 fongmi.m3u；区别只在菜单路径与 EPG 解析格式。 -->
-    <div id="pku9" class="ptab" hidden>
-      <div class="sec">直播源地址（列表订阅）</div>
-      <div class="addr"><input readonly id="u_ku9" /><button class="btn" data-c="u_ku9">复制</button></div>
-      <div class="sec">EPG 节目单地址</div>
-      <div class="addr"><input readonly id="u_epg_ku9" /><button class="btn" data-c="u_epg_ku9">复制</button></div>
-      <ol class="steps">
-        <li><b>酷9</b>：菜单键或右上角 →「设置」→「列表配置」→「列表订阅」→ 填名字和上面的直播源地址 → 确定</li>
-        <li><b style="color:var(--warn)">再点一下刚加的这条订阅</b>才会生效（这一步最容易漏）</li>
-        <li>「设置」→「列表配置」→「EPG 订阅」→ 填 EPG 地址</li>
-        <li>点一下这条 EPG → 把<b>「解析格式」改成 XmlTV</b> → 确定</li>
-        <li><b>电视直播（mytv-android）</b>：「设置」→「订阅源与节目单」→「订阅源」→「添加其他订阅源」→ 填同一个地址；
-            节目单在「节目单地址」里添加，格式会自动识别为 XMLTV</li>
-      </ol>
-      <div class="note">这两个软件的回看占位符都是 <code>${(b)…}</code> 写法，
-        所以统一用这一条 M3U（<code>fongmi.m3u</code>）即可，<b>不要</b>换成 <code>kodi.m3u</code>。
-        酷9 的 EPG 默认按 DIYP 格式解析，<b>必须手动改成 XmlTV</b>，否则节目单一直空着。</div>
-    </div>
+    <!-- ============ 按软件选 ============ -->
+    <div id="pguide" class="ptab" hidden>
+      <div class="panel">
+        <h3>按软件对号入座</h3>
+        <div class="kv kv-guide">
+          <div class="frow"><div class="t">FongMi TV</div><div class="c">
+            填 <code>fongmi.json</code> 一条即可（直播+回看+EPG 全包）。只想看直播不想要节目单时，改填 <code>fongmi.m3u</code>
+          </div></div>
+          <div class="frow"><div class="t">酷9</div><div class="c">
+            直播源填 <code>fongmi.m3u</code>，EPG 另填 <code>epg.xml</code>；
+            <b style="color:var(--warn)">EPG 解析格式必须手动改成 XmlTV</b>，否则节目单一直空着
+          </div></div>
+          <div class="frow"><div class="t">电视直播 (mytv-android)</div><div class="c">
+            同酷9：<code>fongmi.m3u</code> + <code>epg.xml</code>，格式自动识别为 XMLTV
+          </div></div>
+          <div class="frow"><div class="t">TVBox / 影视仓</div><div class="c">
+            优先填 <code>tvbox.json</code>（一条全包）；若只想要直播，填 <code>iptv.m3u8</code>
+          </div></div>
+          <div class="frow"><div class="t">DIYP</div><div class="c">
+            「节目地址」填 <code>iptv.m3u8</code>，「EPG 接口」填 <code>epg.xml</code>
+          </div></div>
+          <div class="frow"><div class="t">Kodi</div><div class="c">
+            装 PVR IPTV Simple Client：M3U 填 <code>kodi.m3u</code>，XMLTV 填 <code>epg.xml</code>
+          </div></div>
+          <div class="frow"><div class="t">天光云影</div><div class="c">
+            填 <code>iptv.m3u8</code>（扫码/网页推送方式导入）。<b>不支持回看</b>，且项目已停更
+          </div></div>
+        </div>
+      </div>
 
-    <div id="ptvbox" class="ptab" hidden>
-      <div class="sec">配置地址（填在 TVBox 的配置/订阅处）</div>
-      <div class="addr"><input readonly id="u_tvbox" /><button class="btn" data-c="u_tvbox">复制</button></div>
-      <ol class="steps">
-        <li>打开 <b>TVBox / 影视仓</b>，进入「设置」→「配置地址」</li>
-        <li>粘贴上面的地址，确定后返回首页</li>
-        <li>直播入口里会出现全部频道，节目单自动加载</li>
-      </ol>
-      <div class="note">这条地址是「一条包全部」：直播、节目单、台标都在里面，不需要分开填。</div>
-    </div>
-
-    <div id="pdiyp" class="ptab" hidden>
-      <div class="sec">节目地址</div>
-      <div class="addr"><input readonly id="u_diyp" /><button class="btn" data-c="u_diyp">复制</button></div>
-      <div class="sec">EPG 接口</div>
-      <div class="addr"><input readonly id="u_epg3" /><button class="btn" data-c="u_epg3">复制</button></div>
-      <ol class="steps">
-        <li>打开 <b>DIYP</b>，进入「设置」→「接口设置」</li>
-        <li>「节目地址」填上面的直播源地址，「EPG 接口」填 EPG 地址</li>
-        <li>返回重新加载频道</li>
-      </ol>
-      <div class="note">DIYP 用 <code>{start}</code> / <code>{end}</code> 回看变量，标准文件（<code>iptv.m3u8</code>）即可。
-        DIYP 自身也支持它专有的 EPG JSON 接口，但直接填这里的 XMLTV 地址同样能正常显示。</div>
-    </div>
-
-    <div id="pkodi" class="ptab" hidden>
-      <div class="sec">PVR IPTV Simple 用的 M3U</div>
-      <div class="addr"><input readonly id="u_kodi" /><button class="btn" data-c="u_kodi">复制</button></div>
-      <div class="sec">EPG（XMLTV）</div>
-      <div class="addr"><input readonly id="u_epg2" /><button class="btn" data-c="u_epg2">复制</button></div>
-      <ol class="steps">
-        <li>先装插件 <b>PVR IPTV Simple Client</b></li>
-        <li>「设置」→「General」→ M3U 播放列表填上面的地址（对应 <code>kodi.m3u</code>）</li>
-        <li>「EPG 设置」→ XMLTV 填上面的 EPG 地址</li>
-        <li>重启 Kodi，在「电视 → 频道」里即可看到</li>
-      </ol>
-      <div class="note">这个文件的回看变量是 <code>${start}</code> / <code>${end}</code>，只给 Kodi 用。
-        是否显示回看取决于插件版本，直播本身不受影响。</div>
-    </div>
-
-    <div id="ptg" class="ptab" hidden>
-      <div class="sec">直播源地址</div>
-      <div class="addr"><input readonly id="u_tg" /><button class="btn" data-c="u_tg">复制</button></div>
-      <ol class="steps">
-        <li>打开 <b>天光云影</b> →「设置」→「直播源」→「自定义直播源」→「添加其他直播源」</li>
-        <li>屏幕会显示一个局域网地址和二维码，<b>在同一局域网的电脑浏览器</b>打开该地址</li>
-        <li>填名称，把上面的地址贴进「链接」，点「推送直播源」</li>
-        <li>回到「设置」→「直播源」，选中刚推的这条并<b>「设为当前」</b></li>
-        <li>节目单：「设置」→「自定义节目单」，填本页 EPG 地址</li>
-      </ol>
-      <div class="note">天光云影的导入是<b>扫码/网页推送</b>，不是填接口框，和 DIYP 不是一套流程。
-        另外它<b>不支持回看</b>：M3U 里的 catchup 属性会被忽略，只能看直播。
-        该项目已停止维护（最后版本 3.3.9），长期使用建议换酷9 或电视直播。</div>
-    </div>
-
-    <div class="panel" style="margin-top:18px">
-      <h3>选哪个</h3>
-      <div class="kv">
-        <div class="frow"><div class="t">电视盒子</div><div class="c">
-          <b>酷9</b> 或 <b>电视直播</b>。都支持 M3U + XMLTV + 回看，装完填两行地址即可；
-          酷9 记得把 EPG 解析格式改成 XmlTV
-        </div></div>
-        <div class="frow"><div class="t">手机 / 平板</div><div class="c">
-          <b>FongMi TV</b>。一条配置地址全包，节目单不用另填
-        </div></div>
-        <div class="frow"><div class="t">影视库一体</div><div class="c">
-          <b>TVBox / 影视仓</b>。直播只是其中一个入口，适合顺便看点播
-        </div></div>
-        <div class="frow"><div class="t">4K 频道</div><div class="c">
-          M3U 里 <span data-k="uhdcount">—</span> 个 4K 台，多数是 <b>H.265/HEVC</b> 编码。
-          播放设备不支持 HEVC 时会<b>有声音、画面全黑</b>，这不是源的问题。
-          设备端一般都能硬解；本机预览若黑屏，用页面上的「切到低清晰度」降成 1080P
-        </div></div>
+      <div class="panel" style="margin-top:14px">
+        <h3>4K 频道注意</h3>
+        <div class="kv">
+          <div class="frow"><div class="t">编码</div><div class="c">
+            M3U 里 <span data-k="uhdcount">—</span> 个 4K 台，多数是 <b>H.265/HEVC</b>。
+            设备不支持 HEVC 时会<b>有声音、画面全黑</b>，这不是源的问题，电视端一般能硬解
+          </div></div>
+          <div class="frow"><div class="t">真伪</div><div class="c">
+            「超高清 / 4K 组」里有部分是「高清臻享」，实测只到 1080P，看 <code>4k.json</code> 的 <code>real_4k</code> 字段即可分辨
+          </div></div>
+        </div>
       </div>
     </div>
 
-    <div class="panel">
-      <h3>文件清单</h3>
-      <div class="kv">
-        <div class="frow"><div class="t">FongMi</div><div class="c">
-          <code>fongmi.json</code>（配置）、<code>fongmi.m3u</code>（清单）、<code>epg/&lt;频道&gt;/&lt;日期&gt;.json</code>
-        </div></div>
-        <div class="frow"><div class="t">酷9 / 电视直播</div><div class="c">
-          用 <code>fongmi.m3u</code> + <code>epg.xml</code>
-        </div></div>
-        <div class="frow"><div class="t">TVBox</div><div class="c">
-          <code>tvbox.json</code>、<code>iptv.m3u8</code>、<code>epg.xml</code>
-        </div></div>
-        <div class="frow"><div class="t">Kodi</div><div class="c">
-          <code>kodi.m3u</code>（回看语法 <code>${start}</code>）+ <code>epg.xml</code>
-        </div></div>
-        <div class="frow"><div class="t">4K 清单</div><div class="c">
-          <code>4k.json</code>：全部真 4K 频道及其实测编码，便于单独筛选
-        </div></div>
+    <!-- ============ 原版清单 ============ -->
+    <div id="porig" class="ptab" hidden>
+      <div class="sec">江苏移动原版节目清单</div>
+      <div class="note" style="border-left-color:var(--accent)">
+        完全照搬机顶盒电视墙的 <b>11 个原分组</b>（超高清 / 央视 / 本地 / 卫视 / 体育 / 专业频道 / 影视 / 少儿 / 生活 / 广播 / 购物），
+        台号、台名均按上游原样，不做任何二次拆分或改名。<br/>
+        与上面「全部地址」里的清单是<b>两套独立产物</b>，可同时使用、互不影响。
       </div>
+
+      <div class="lcard">
+        <div class="lhead"><span class="fname">orig.m3u8</span><span class="tagx ori">原版</span></div>
+        <div class="addr"><input readonly id="u_orig_m3u" /><button class="btn" data-c="u_orig_m3u">复制</button></div>
+        <div class="luse">原版 11 组直播清单。<b>DIYP</b>、<b>天光云影</b>、<b>通用播放器/盒子</b>（回看语法 <code>{start}/{end}</code>）。</div>
+      </div>
+
+      <div class="lcard">
+        <div class="lhead"><span class="fname">orig_epg.xml</span><span class="tagx ori">原版</span></div>
+        <div class="addr"><input readonly id="u_orig_epg" /><button class="btn" data-c="u_orig_epg">复制</button></div>
+        <div class="luse">原版清单配套节目单（XMLTV）。<b>DIYP</b>、<b>酷9</b>、<b>Kodi</b> 等，与 <code>orig.m3u8</code> 配对使用。</div>
+      </div>
+
+      <div class="lcard">
+        <div class="lhead"><span class="fname">orig.json</span><span class="tagx">数据</span></div>
+        <div class="addr"><input readonly id="u_orig_json" /><button class="btn" data-c="u_orig_json">复制</button></div>
+        <div class="luse">原版分组与频道的结构化清单（含当前节目）。<b>给播放器填不了</b>，供查看原版分组构成。</div>
+      </div>
+
+      <div class="note">原版清单的特点与代价：「本地」组把江苏省级台和 13 地市县区台混在 67 台一坨，
+        「专业频道」19 台内容杂糅，「超高清」里混着实测 1080P 的臻享台 —— 电视墙原样如此，不作修正。</div>
     </div>
   </div>
+
 
   <!-- ============ 5. 软件介绍 ============ -->
   <div class="page" id="pg-about" hidden>
@@ -1625,21 +1653,26 @@ async function loadLogs(){
 function fillUrls(){
   const base = ST.base_url || (location.protocol+'//'+location.host);
   const set=(id,path)=>{ const el=document.getElementById(id); if(el) el.value = base+path; };
+  // ① 一条搞定
   set('u_fongmi','/fongmi.json');
-  set('u_fongmi_m3u','/fongmi.m3u');
-  // 酷9 / 电视直播：回看占位符与 FongMi 一致，共用 fongmi.m3u；EPG 用标准 XMLTV
-  set('u_ku9','/fongmi.m3u');
-  set('u_epg_ku9','/epg.xml');
   set('u_tvbox','/tvbox.json');
-  set('u_diyp','/iptv.m3u8');
-  set('u_epg3','/epg.xml');
-  set('u_kodi','/kodi.m3u');
-  set('u_epg2','/epg.xml');
-  set('u_tg','/iptv.m3u8');
+  // ② 三种回看语法的 M3U
+  set('u_ku9','/fongmi.m3u');        // ${(b)} 语法：FongMi/酷9/电视直播
+  set('u_diyp','/iptv.m3u8');        // {start} 语法：DIYP/天光云影/通用
+  set('u_kodi','/kodi.m3u');         // ${start} 语法：Kodi
+  // ③ EPG
+  set('u_epg','/epg.xml');
+  // ④ 数据类
+  set('u_4k','/4k.json');
+  set('u_ch','/channels.json');
+  // 原版清单（方案二）
+  set('u_orig_m3u','/orig.m3u8');
+  set('u_orig_epg','/orig_epg.xml');
+  set('u_orig_json','/orig.json');
 }
 $$('#pTabs .tab').forEach(t=> t.onclick = ()=>{
   $$('#pTabs .tab').forEach(x=>x.classList.toggle('on',x===t));
-  ['fongmi','ku9','tvbox','diyp','kodi','tg'].forEach(k=>{ $('#p'+k).hidden = (k!==t.dataset.t); });
+  ['all','guide','orig'].forEach(k=>{ const e=$('#p'+k); if(e) e.hidden = (k!==t.dataset.t); });
 });
 
 /* ---------- 事件绑定 ---------- */

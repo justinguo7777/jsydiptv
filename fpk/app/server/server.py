@@ -93,6 +93,16 @@ ASSORT_GROUPS = {208: GROUP_UHD, 116: "央视", 121: "卫视", 120: "江苏",
 ASSORT_ALL = "115"
 ABILITY_BASE = {"deviceGroupIds": ["1697"]}
 
+# ---- 方案二：上游原版分组（完全照搬电视墙，不做任何本地化重排）----
+# 顺序即电视墙顺序；「全部/收藏」不是分组，不产出。
+ORIG_GROUPS = [
+    ("208", "超高清"), ("116", "央视"), ("120", "本地"), ("121", "卫视"),
+    ("170", "体育"), ("211", "专业频道"), ("169", "影视"), ("171", "少儿"),
+    ("172", "生活"), ("122", "广播"), ("173", "购物"),
+]
+# 上游「超高清」里混着高清臻享（部分仅 1080P），原版清单按上游原样输出不谎报，
+# 只在 EXTINF 里如实带分辨率信息，由用户自行判断。
+
 # 4K/超高清判定。
 #
 # 1.6.0 的重要修正 —— 「高清臻享」组：
@@ -647,6 +657,29 @@ def fetch_members(ability, assort):
     return [c.get("uuid") for c in (j.get("content") or {}).get("channels") or [] if c.get("uuid")]
 
 
+def fetch_islocal(dc="320000"):
+    """采「全省视角」的 isLocal 标识 → {uuid: 频道名}，即全部县区级台。
+
+    为什么用它（2026-11-25 实测决策）：
+      · 上游每个频道对象自带 isLocal 字段，由源站自己维护，新增县区台会自动打标；
+      · 旧方案靠「13 个地市本地清单取交集剔除」，要求 13 份清单同时更新且全部
+        拉取成功才算得出结果，任一地市接口失败或漏推 → 该台掉进「省级台」被误判；
+      · 实测两法当前结果 100% 一致（全省视角 59 台 vs 交集法 59 台），
+        但 isLocal 更抗上游变化，因此改为主判据、交集法降级为交叉校验。
+
+    ⚠️ 必须用 districtCode=320000（全省）。用某个地市视角会只返回该市自己的
+    本地台（南通仅 3 台、南京 4 台），地方组会从 59 台塌成几个。
+    """
+    url = ("%s/lvps/channelList?assortId=115&serviceChannelId=&abilityString=%s"
+           % (EPG_BASE, load_ability(dc)))
+    j = json.loads(http_get(url))
+    if j.get("resultCode") != "000":
+        return {}
+    return {c.get("uuid"): (c.get("name") or "")
+            for c in (j.get("content") or {}).get("channels") or []
+            if str(c.get("isLocal")) == "1" and c.get("uuid")}
+
+
 def _classify(c):
     """给频道定最终分组（唯一权威入口，供 collect / _reclassify 复用）。
 
@@ -697,6 +730,36 @@ def _classify_by_name(c):
     if re.search(r"影视|剧场|电影|院线|戏曲|梨园|综艺|喜剧", n):
         return "影视剧场"
     return "生活纪录"
+
+
+# 孤儿频道 = 上游「全部」里存在、但没被放进任何原版分组的频道。
+# 它们没有 otype，只能走 _classify_by_name 猜。上游随时可能新增这类台，
+# 静默塞进「生活纪录」很难察觉，因此这里显式收集 + 告警（方案一）。
+ORPHANS = {}
+
+
+def _collect_orphans(chs):
+    """收集没有上游分组归属的频道，供日志告警与 meta 记录。
+
+    实测（2026-11-25）：「全部」278 台里有 12 台上游未归任何分组
+    （高尔夫网球/地方戏曲/欢乐棋牌/潮妈辣婆/央视I套/军事之旅/科幻世界/
+      儿童天地/纪录片/梨园经典荟萃/第一院线/影视剧场），当前靠名称兜底。
+    """
+    ORPHANS.clear()
+    for c in chs:
+        if not (c.get("otypes") or []):
+            ORPHANS[c["uuid"]] = {
+                "num": c.get("num"), "name": c.get("name"),
+                "group": c.get("group"), "by": "名称兜底",
+            }
+    if ORPHANS:
+        log("      ⚠ 孤儿频道（上游未归任何分组，靠名称兜底）%d 个：%s"
+            % (len(ORPHANS), "、".join("%s→%s" % (o["name"], o["group"])
+                                      for o in list(ORPHANS.values())[:10])))
+        if len(ORPHANS) > 5:
+            log("      ⚠ 孤儿数量 %d > 5，上游可能新增了未分类频道，建议核对分组"
+                % len(ORPHANS))
+    return ORPHANS
 
 
 def probe_uhd(chs, cdn, quiet=False):
@@ -823,11 +886,14 @@ def collect(districts, days, hist_days=7):
         「地方」则用 13 个地市各自的 assortId=120「本地」清单做交集剔除来定位。
       · 真 4K 由实测分辨率判定，单独成组并置顶。
     """
-    province_ab = load_ability("320100")
+    province_ab = load_ability("320000")     # ⚠ 必须全省视角（320100 只覆盖 211 台）
     assorts = fetch_assortments(province_ab)
     log("      上游分组 %d 个: %s" % (len(assorts), "、".join(n for _i, n, _s in assorts)))
 
     # ① 分组归属表：uuid -> [上游分组名]
+    #    用全省视角拉取：实测 320100 视角只有 211 个频道有分组归属，
+    #    320000 全省视角有 266 个。用南京视角会让其余地市的 55 个台拿不到
+    #    otype，被误判成「孤儿频道」（这就是曾出现 67 个假孤儿的原因）。
     member = {}
     for gid, gname, _s in assorts:
         try:
@@ -852,7 +918,32 @@ def collect(districts, days, hist_days=7):
         for u in uuids:
             if u not in common:
                 city_of[u] = code
-    log("      省级本地台（13 市共有）%d 个，地方台 %d 个" % (len(common), len(city_of)))
+    log("      省级本地台（13 市共有）%d 个，地方台（交集法）%d 个"
+        % (len(common), len(city_of)))
+
+    # ②-b 上游 isLocal 全省视角（主判据，2026-11-25 起）
+    #    与 13 市交集法并行：isLocal 负责「是不是县区级台」，city_of 负责「属哪个市」。
+    islocal = {}
+    try:
+        islocal = fetch_islocal("320000")
+    except Exception as e:      # noqa: BLE001
+        log("      isLocal 拉取失败(%s)，回退纯交集法" % e)
+    if islocal:
+        cname_of = dict(islocal)
+        only_local = set(islocal) - set(city_of)
+        only_inter = set(city_of) - set(islocal)
+        log("      isLocal 全省视角 %d 台；与交集法差异：isLocal 独有 %d / 交集法独有 %d"
+            % (len(islocal), len(only_local), len(only_inter)))
+        if only_local:
+            log("        ·仅 isLocal 判定为地方台: %s"
+                % "、".join(islocal[u] or u for u in list(only_local)[:8]))
+        if only_inter:
+            log("        ·仅交集法判定为地方台（isLocal 未标）: %s"
+                % "、".join("%s(%s)" % (cname_of.get(u, u), DNAME.get(code, code))
+                           for u, code in list((u, city_of[u]) for u in only_inter)[:8]))
+        # 以 isLocal 为主判据并集（宁多勿漏：任一法认定是地方台就按地方台处理），
+        # 这样上游新增县区台（isLocal=1 但 13 市清单尚未覆盖）不会漏成「江苏省级台」。
+        city_of = {u: city_of.get(u, "") for u in (set(city_of) | set(islocal))}
 
     # ③ 频道主体：13 地市「全部」清单取并集（各地市清单并不相同）
     chs, seen, prs_list = [], set(), []
@@ -878,6 +969,9 @@ def collect(districts, days, hist_days=7):
             c["district"] = city_of[c["uuid"]]
             c["group_from_city"] = True
         c["group"] = _classify(c)
+
+    # ④-b 孤儿频道告警（上游未归任何分组的频道，只能靠名称兜底）
+    _collect_orphans(chs)
 
     prs, pk = [], set()
     for p in sorted(prs_list, key=lambda v: v["start"]):
@@ -1254,6 +1348,131 @@ def write_outputs(out, cdn, channels, programs, backup_days, days, base_url="", 
     }, ensure_ascii=False, indent=2))
 
 
+# ---------------------------------------------------------------- 方案二：上游原版清单
+#
+# 与主产物完全独立、互不影响：
+#   · 主产物（iptv.m3u8 等）走本应用的二次分类（4K/央视/卫视/江苏/地方/6 内容组）；
+#   · 原版产物（orig.m3u8 / orig_epg.xml）**完全照搬上游 getOpenNewAssortment
+#     的 11 个分组**，组名、台号、台名全部用上游原样，不做任何重排/改名/拆分。
+#
+# 为什么单独出一套而不是替换：「本地」组把江苏省级台和 13 地市县区台混在 67 台里，
+# 「专业频道」19 台内容完全杂糅，「超高清」里还混着实测 1080P 的高清臻享 ——
+# 直接替换会让这三处退回问题状态。因此保留两套，用户按需选。
+
+def write_orig_outputs(out, cdn, channels, programs, backup_days, base_url=""):
+    """生成「江苏移动原版节目清单」：orig.m3u8 + orig_epg.xml + orig.json。
+
+    分组 = 上游 11 组原样（ORIG_GROUPS），一个频道可同时出现在多个组
+    （电视墙本身就这样展示：CCTV-5 同时在央视与体育组）。
+    """
+    base = (base_url or "").rstrip("/")
+    now = datetime.now(TZ8)
+    stamp = now.strftime("%Y-%m-%d %H:%M:%S")
+    day0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    epg_lo = int((day0 - timedelta(days=5)).timestamp())
+    epg_hi = int((day0 + timedelta(days=2)).timestamp())
+    nowts = int(time.time())
+
+    def write(name, text):
+        tmp = os.path.join(out, name + ".tmp")
+        with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+        os.replace(tmp, os.path.join(out, name))
+
+    by_uuid = {c["uuid"]: c for c in channels}
+
+    def live_of(ch):
+        return "%s/%s/live1/%s/%s/1.m3u8" % (cdn, ch["cp"], ch["code"], ch["code"])
+
+    def back_of(ch, va="{start}", vb="{end}"):
+        return "%s/%s/lookback/%s/%s?playseek=%s-%s" % (
+            cdn, ch["cp"], ch["code"], ch["code"], va, vb)
+
+    def logo_of(ch):
+        p = ch.get("logo") or ""
+        if not p:
+            return ""
+        if p.startswith("http://") or p.startswith("https://"):
+            return p
+        return (base + p) if base else p
+
+    def oname(ch):
+        """台名直接用当前名称（不做上游原名还原）。"""
+        return ch["name"]
+
+    def onum(ch):
+        return ch["num"]
+
+    # 上游原分组名 → 该组下的频道（按台号升序，与电视墙顺序接近）
+    member = {c["uuid"]: (c.get("otypes") or []) for c in channels}
+    grouped = {}
+    for _aid, gname in ORIG_GROUPS:
+        hit = [c for c in channels if gname in member.get(c["uuid"], [])]
+        hit.sort(key=lambda x: (int(re.sub(r"\D", "", onum(x) or "") or 0), oname(x)))
+        grouped[gname] = hit
+
+    lines = ["#EXTM3U",
+             "# 江苏移动 IPTV · 原版节目清单（完全照搬机顶盒电视墙分组）｜更新: %s" % stamp,
+             "# 分组与台号、台名均取自上游 getOpenNewAssortment，未做任何本地化重排",
+             "# 同一频道可能出现在多个分组（与电视墙一致）"]
+    total = 0
+    for gname, chs_g in grouped.items():
+        for ch in chs_g:
+            catch = ""
+            if ch.get("back", 0) > 0:
+                catch = (' catchup="append" catchup-days="%d" catchup-source="%s"'
+                         % (backup_days, back_of(ch)))
+            lines.append('#EXTINF:-1 tvg-id="%s" tvg-name="%s" tvg-chno="%s" '
+                         'tvg-logo="%s" group-title="%s"%s,%s'
+                         % (ch["uuid"], oname(ch), onum(ch), logo_of(ch), gname, catch, oname(ch)))
+            lines.append(live_of(ch))
+            total += 1
+    write("orig.m3u8", "\n".join(lines))
+
+    # 原版 EPG：频道 id 用 uuid（与 m3u 的 tvg-id 对齐），只含出现在原版清单里的频道
+    used = {c["uuid"] for g in grouped.values() for c in g}
+    x = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="jsydiptv-orig">']
+    for ch in [c for c in channels if c["uuid"] in used]:
+        icon = '<icon src="%s"/>' % escape(logo_of(ch)) if ch.get("logo") else ""
+        x.append('  <channel id="%s"><display-name>%s</display-name>%s</channel>'
+                 % (escape(str(ch["uuid"])), escape(oname(ch)), icon))
+    for p in programs:
+        if p["uuid"] not in used or p["end"] <= epg_lo or p["start"] >= epg_hi:
+            continue
+        s = datetime.fromtimestamp(p["start"], TZ8).strftime("%Y%m%d%H%M%S") + " +0800"
+        e = datetime.fromtimestamp(p["end"], TZ8).strftime("%Y%m%d%H%M%S") + " +0800"
+        x.append('  <programme start="%s" stop="%s" channel="%s"><title lang="zh">%s</title></programme>'
+                 % (s, e, escape(str(p["uuid"])), escape(p["title"])))
+    x.append("</tv>")
+    write("orig_epg.xml", "\n".join(x))
+
+    # 机器可读清单（界面上展示「原版分组与频道」用）
+    def ch_obj(ch):
+        ps = [p for p in programs if p["uuid"] == ch["uuid"]]
+        cur = nxt = None
+        for p in ps:
+            if p["start"] <= nowts < p["end"]:
+                cur = p
+            elif p["start"] >= nowts and nxt is None:
+                nxt = p
+        return {"num": onum(ch), "name": oname(ch), "uuid": ch["uuid"],
+                "logo": ch.get("logo") or "", "back": ch.get("back", 0),
+                "live": live_of(ch),
+                "now": cur["title"] if cur else "",
+                "next": nxt["title"] if nxt else ""}
+
+    write("orig.json", json.dumps({
+        "updated": stamp,
+        "note": "完全照搬上游 getOpenNewAssortment 的 11 个分组，台名/台号均为上游原样",
+        "total_entries": total,
+        "unique_channels": len(used),
+        "groups": [{"name": gname, "assortId": aid, "count": len(grouped[gname]),
+                    "channels": [ch_obj(c) for c in grouped[gname]]}
+                   for aid, gname in ORIG_GROUPS],
+    }, ensure_ascii=False, indent=2))
+    return total, len(used)
+
+
 # ---------------------------------------------------------------- 自检与发布
 
 def probe_live(url, timeout=8):
@@ -1380,6 +1599,12 @@ def run_once(cfg, base_url=""):
             uhd_probed = True
         log("[3/5] 用 CDN %s 生成并自检 ..." % h)
         write_outputs(build, cdn, chs, prs, cfg["backup_days"], cfg["days"], base_url, minimal)
+        # 方案二：上游原版清单（独立产物，不受 minimal / 二次分类影响）
+        try:
+            _ot, _ou = write_orig_outputs(build, cdn, chs, prs, cfg["backup_days"], base_url)
+            log("      原版清单：%d 条 / %d 个频道（上游 11 组原样）" % (_ot, _ou))
+        except Exception as e:      # noqa: BLE001
+            log("      ⚠ 原版清单生成失败（不影响主产物）: %s" % e)
         ok, detail = validate(build, chs, cdn, minimal)
         if ok:
             meta = {
@@ -1391,6 +1616,9 @@ def run_once(cfg, base_url=""):
                 "uhd": sum(1 for ch in chs if ch.get("group") == GROUP_UHD),
                 "uhd_real": sum(1 for ch in chs if ch.get("is_4k")),
                 "uhd_h265": sum(1 for ch in chs if ch.get("group") == GROUP_UHD and "265" in (ch.get("codec") or "")),
+                # 孤儿频道（上游未归任何分组，靠名称兜底）
+                "orphans": len(ORPHANS),
+                "orphan_list": [dict(v) for v in ORPHANS.values()],
             }
             with open(os.path.join(build, "meta.json"), "w", encoding="utf-8", newline="\n") as f:
                 json.dump(meta, f, ensure_ascii=False, indent=2)
@@ -1411,6 +1639,7 @@ def run_once(cfg, base_url=""):
             keep = ({"iptv.m3u8", "kodi.m3u", "fongmi.m3u", "fongmi.json",
                      "epg.xml", "tvbox.json", "meta.json", "4k.json",
                      "channels.json", "programs.json",
+                     "orig.m3u8", "orig_epg.xml", "orig.json",
                      "epg"} if minimal else None)
             publish(build, DATA, keep)
             try:
@@ -1603,6 +1832,8 @@ READ_ONLY_FILES = {
     "频道对照_机顶盒顺序.csv", "回看节目单.csv", "meta.json",
     "4k.json",          # 4K 频道清单（含实测编码），对外可直接取用
     "channels.json",
+    # 方案二：上游原版清单（11 组原样）
+    "orig.m3u8", "orig_epg.xml", "orig.json",
     # ASCII 别名（真实文件另见 ALIASES，部分模式会直接落盘）
     "kodi.m3u", "live.m3u", "live.txt", "diyp.m3u", "fongmi.m3u", "multicast.m3u",
 }

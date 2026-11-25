@@ -26,3 +26,7 @@ verify/out/
 upstream/
 archive/
 docs/fnos-ref/
+
+# 上游快照（调研中间产物，不入库）
+上游原版分组*.json
+上游原版分组*.txt
