@@ -391,6 +391,10 @@
   .lcard .addr input{background:var(--bg3)}
   .luse{font-size:12.5px;color:var(--fg2);line-height:1.75;margin-top:7px}
   .luse b{color:var(--fg)}
+  /* 描述里的代码/占位符：等宽 + 淡底，避免和中文挤在一起 */
+  .luse code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;
+             background:var(--bg3);border-radius:4px;padding:1px 5px;color:var(--fg);
+             white-space:nowrap}
   @media(max-width:600px){
     .luse{font-size:12px}
     .lhead{flex-wrap:wrap}

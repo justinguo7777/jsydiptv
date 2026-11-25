@@ -1,11 +1,40 @@
 # 江苏移动 IPTV · 飞牛 fnOS 应用
 
-把江苏移动 IPTV（OTT）的直播频道表、回看与节目单，自动转换成通用播放器可直接使用的
-M3U / XMLTV / TVBox 配置，并附带一个内置 Web 界面用于频道预览与直播试看。
+[![Release](https://img.shields.io/github/v/release/justinguo7777/jsydiptv?color=blue)](https://github.com/justinguo7777/jsydiptv/releases)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-fnOS%20%7C%20Linux-lightgrey)]()
+[![Python](https://img.shields.io/badge/python-3.8%2B-blue)]()
+[![Deps](https://img.shields.io/badge/dependencies-zero-brightgreen)]()
 
-**无需账号密码** —— 数据来自移动 OTT 的 `lvps` 接口，按来源 IP 放行。
+把**江苏移动 IPTV（OTT）**的直播频道、回看与节目单，自动整理成播放器能直接用的
+M3U / XMLTV / TVBox 配置，并附一个内置 Web 界面做频道预览与试看。
+
+> **一句话**：装一次，每天自动更新；填一个地址，电视/手机/盒子全部能看。
+> **不用账号密码** —— 数据走移动 OTT 的 `lvps` 接口，按来源 IP 放行，只需在江苏移动网络下。
 
 ![界面](docs/screenshot.png)
+
+## 快速开始
+
+1. 到 [Releases](https://github.com/justinguo7777/jsydiptv/releases) 下载最新的 `jsydiptv-x.y.z.fpk`
+2. 飞牛「应用中心」→ 右上角「手动安装」→ 选择该 fpk
+3. 向导里**只需填服务端口**（默认 `18123`），点完成
+4. 浏览器打开 `http://<NAS-IP>:18123`，看频道列表；再到「播放器接入」页复制地址填进播放器
+
+> 装好后在「应用设置」里可调：地市、每天更新时间、节目单天数、输出模式等。
+
+## 两套清单，按需选择
+
+本应用同时产出**两套互不影响的清单**，装好后都在「播放器接入」页能看到地址：
+
+| | 智能分组清单（默认推荐） | 原版清单 |
+|---|---|---|
+| 文件 | `iptv.m3u8` / `kodi.m3u` / `fongmi.m3u` | `orig.m3u8` |
+| 分组 | 按内容细分：4K / 央视 / 卫视 / 江苏 / 地方(按市) / 影视剧场 / 少儿动画 / 体育竞技 / 生活纪录 / 音乐广播 / 购物 | **完全照搬机顶盒电视墙 11 组**（超高清/央视/本地/卫视/体育/专业频道/影视/少儿/生活/广播/购物） |
+| 4K | 实测分辨率后单独成组并置顶，真 4K / 高清臻享 分开标注 | 沿用上游「超高清」组，真伪不标注 |
+| 适合 | 想直接能用的、讨厌台乱混在一起的 | 习惯机顶盒那套分组顺序的 |
+
+> 想看**电视墙原样**就用原版清单；想**分类清楚好找台**就用智能分组清单。
 
 ## 功能
 
@@ -15,8 +44,7 @@ M3U / XMLTV / TVBox 配置，并附带一个内置 Web 界面用于频道预览�
 | **4K 分组（置顶）** | CCTV 台在最前按台号升序；含真 4K 与「高清臻享」，按**实测分辨率**标注真伪（20 个中 14 个真 4K） |
 | **智能分组** | 4K / 央视 / 卫视 / 江苏 / 地方(按市) / 影视剧场 / 少儿动画 / 体育竞技 / 生活纪录 / 音乐广播 / 购物，不再有「其他」大杂烩 |
 | 一键展开/折叠 | 频道列表可一键展开或折叠所有分组，折叠状态跨刷新保留 |
-| 分组来自上游 | 主分组取自运营商 `getOpenNewAssortment`，再按内容细分 |
-| **原版清单（新增）** | 另出一套 `orig.m3u8` / `orig_epg.xml` / `orig.json`，**完全照搬机顶盒电视墙 11 组**，与二次分类清单并存 |
+| **原版清单** | 另出一套 `orig.m3u8` / `orig_epg.xml` / `orig.json`，**完全照搬机顶盒电视墙 11 组**（289 条 / 265 个唯一频道），与智能分组清单并存 |
 | 节目单 EPG | 前 7 天 ~ 后 3 天，实测约 7 万条 programme |
 | 回看 catchup | 模板化时钟地址，运营商保留约 7 天 |
 | 台标本地化 | 抓回 NAS 本地，哈希命名，避免外网掉图 |
@@ -63,6 +91,12 @@ M3U / XMLTV / TVBox 配置，并附带一个内置 Web 界面用于频道预览�
 
 > 酷9 与 FongMi 的占位符一致，所以共用 `fongmi.m3u`，**不能**给它们 `kodi.m3u`。
 > 另外酷9 的 EPG「解析格式」**必须手动改成 XmlTV**（默认是 DIYP，否则节目单一直空着）。
+
+### 界面预览
+
+「播放器接入」页把全部输出地址列出来，每一条都标注**能在哪些软件里用**，不用自己猜：
+
+![播放器接入页](docs/screenshot-orig.png)
 
 ## 关于 4K 频道
 
