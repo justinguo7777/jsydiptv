@@ -1,0 +1,28 @@
+# 运行时与临时产物
+__pycache__/
+*.pyc
+*.pyo
+.tmp/
+tmp/
+.build/
+
+# 构建中间物
+/fpk_build/
+*.tmp
+
+# 编辑器/系统
+.DS_Store
+.vscode/
+.idea/
+
+# 打包产物（安装包通过 Releases 分发，不进仓库）
+*.fpk
+
+# 本地验证输出
+verify/out/
+*.log
+
+# 开发过程资料（外围调研包 / 历史安装包 / 官方文档副本），不纳入开源仓库
+upstream/
+archive/
+docs/fnos-ref/

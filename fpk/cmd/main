@@ -1,0 +1,156 @@
+#!/bin/bash
+# 江苏移动 IPTV · 应用生命周期：start / stop / status
+# fnOS 退出码约定：0=成功(运行中) 1=失败 3=未运行
+
+LOG="${TRIM_PKGVAR}/service.log"
+PIDF="${TRIM_PKGVAR}/app.pid"
+CONF="${TRIM_PKGETC}/config.json"
+SRV="${TRIM_APPDEST}/server/server.py"
+
+PY="${TRIM_APPDEST}/../runtime/bin/python3"
+if [ ! -x "$PY" ]; then
+    PY="$(command -v python3 2>/dev/null)"
+fi
+if [ -z "$PY" ] || [ ! -x "$PY" ]; then
+    echo "未找到 python3，无法启动服务。" > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
+    exit 1
+fi
+
+log(){ echo "$(date '+%Y-%m-%d %H:%M:%S') [main] $*" >> "$LOG"; }
+
+# 列出所有运行本应用服务端的 PID。
+# 不依赖 PID 文件：历史遗留实例、被 reparent 到 1 的孤儿进程都能找到。
+# 用本应用独有路径匹配，不会误杀其他 python 进程。
+own_pids(){
+    for d in /proc/[0-9]*; do
+        [ -r "$d/cmdline" ] || continue
+        c="$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)" || continue
+        case "$c" in
+            *"$SRV"*) echo "${d#/proc/}" ;;
+        esac
+    done
+}
+
+# PID 文件里的进程（若仍存活）
+running(){
+    [ -f "$PIDF" ] || return 1
+    local p; p="$(head -n1 "$PIDF" 2>/dev/null | tr -dc '0-9')"
+    [ -n "$p" ] || return 1
+    kill -0 "$p" 2>/dev/null || { rm -f "$PIDF"; return 1; }
+    echo "$p"
+}
+
+# 从 config.json 读端口（失败回落 18123）
+read_port(){
+    local p=""
+    if [ -f "$CONF" ]; then
+        p="$("$PY" - "$CONF" <<'PYEOF' 2>/dev/null
+import json,sys
+try:
+    print(int(json.load(open(sys.argv[1],encoding="utf-8")).get("port") or 18123))
+except Exception:
+    print(18123)
+PYEOF
+)"
+    fi
+    [ -n "$p" ] || p=18123
+    echo "$p"
+}
+
+port_listening(){
+    # 仅检查本机是否有人在监听该端口（含 0.0.0.0 / ::）
+    ss -lnt 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$1\$"
+}
+
+# 杀掉本应用所有实例，返回后保证端口不再被本应用占用
+kill_own(){
+    local pids; pids="$(own_pids | sort -u | tr '\n' ' ')"
+    local p; p="$(running)"
+    [ -n "$p" ] && pids="$pids $p"
+    pids="$(echo $pids | tr ' ' '\n' | sort -u | grep -E '^[0-9]+$' | tr '\n' ' ')"
+    [ -n "$(echo $pids | tr -d ' ')" ] || { rm -f "$PIDF"; return 1; }
+
+    log "终止进程: $pids"
+    local pid
+    for pid in $pids; do kill -TERM "$pid" 2>/dev/null; done
+    local i=0 alive
+    while [ "$i" -lt 10 ]; do
+        alive=""
+        for pid in $pids; do kill -0 "$pid" 2>/dev/null && alive="$alive $pid"; done
+        [ -z "$alive" ] && break
+        sleep 1; i=$((i+1))
+    done
+    for pid in $pids; do kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null; done
+    sleep 1
+    rm -f "$PIDF"
+    return 0
+}
+
+start_app(){
+    local PORT; PORT="$(read_port)"
+
+    # 端口若被本应用的历史进程占用，先清掉（这是"启用失败/端口被占用"的根因）
+    if port_listening "$PORT" && [ -n "$(own_pids)" ]; then
+        log "端口 $PORT 被本应用残留进程占用，先清理"
+        kill_own
+    fi
+
+    if running >/dev/null; then
+        log "已在运行，跳过启动"
+        return 0
+    fi
+    # 仍有本应用进程在跑（PID 文件丢失的情况）→ 复用，不重复启动
+    if [ -n "$(own_pids)" ]; then
+        log "检测到本应用已在运行，跳过启动"
+        return 0
+    fi
+    # 端口被别的程序占用 → 明确报错，不静默失败
+    if port_listening "$PORT"; then
+        log "端口 $PORT 已被其他程序占用，拒绝启动"
+        echo "端口 $PORT 已被其他程序占用，请在「应用设置」中更换端口。" > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
+        return 1
+    fi
+
+    mkdir -p "$TRIM_PKGVAR" "$TRIM_PKGETC"
+    log "启动服务，端口 $PORT"
+    cd "$TRIM_APPDEST/server" || exit 1
+    TRIM_APPDEST="$TRIM_APPDEST" TRIM_PKGETC="$TRIM_PKGETC" TRIM_PKGVAR="$TRIM_PKGVAR" \
+        nohup "$PY" "$SRV" --port "$PORT" >> "$LOG" 2>&1 &
+    echo $! > "$PIDF"
+    # 最多等 20 秒确认进程存活（首次启动会同步拉一次频道表，这里只看进程不在即失败）
+    local i=0
+    while [ "$i" -lt 20 ]; do
+        sleep 1; i=$((i+1))
+        if ! kill -0 "$(cat "$PIDF" 2>/dev/null)" 2>/dev/null; then
+            log "进程启动后退出，见上方日志"
+            echo "服务启动失败，请查看应用日志。" > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
+            rm -f "$PIDF"
+            return 1
+        fi
+        [ "$i" -ge 3 ] && return 0
+    done
+    return 0
+}
+
+stop_app(){
+    if [ -z "$(own_pids)" ] && ! running >/dev/null; then
+        log "未在运行"
+        rm -f "$PIDF"
+        return 0
+    fi
+    kill_own
+    local p; p="$(read_port)"
+    if port_listening "$p"; then
+        log "警告：停止后端口 $p 仍被（非本应用的）程序占用"
+    fi
+    return 0
+}
+
+case "$1" in
+    start)   start_app ;;
+    stop)    stop_app ;;
+    status)
+        if [ -n "$(own_pids)" ] || running >/dev/null; then exit 0; else exit 3; fi
+        ;;
+    *) echo "用法: $0 {start|stop|status}" > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"; exit 1 ;;
+esac

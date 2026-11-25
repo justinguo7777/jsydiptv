@@ -1,0 +1,16 @@
+#!/bin/bash
+# 安装前检查运行环境
+set -u
+mkdir -p "${TRIM_PKGVAR:-/tmp}" 2>/dev/null
+echo "$(date '+%F %T') install_init" >> "${TRIM_PKGVAR:-/tmp}/install.log" 2>/dev/null
+
+PY="$(command -v python3 2>/dev/null)"
+if [ -z "$PY" ]; then
+    echo "本应用需要 Python 3，但系统未找到 python3。" > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
+    exit 1
+fi
+if ! "$PY" -c 'import sys; sys.exit(0 if sys.version_info>=(3,8) else 1)' 2>/dev/null; then
+    echo "Python 版本过低，需要 3.8 及以上。" > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
+    exit 1
+fi
+exit 0

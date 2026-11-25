@@ -1,0 +1,1743 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>江苏移动 IPTV</title>
+<style>
+  :root{
+    --fg:#1f2329; --fg2:#646a73; --fg3:#8f959e;
+    --bg:#fff; --bg2:#f5f6f7; --bg3:#e8eaed;
+    --line:rgba(0,0,0,.10); --accent:#3370ff; --ok:#2ea121; --warn:#d89614; --err:#d54941;
+    --r:8px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --fg:#e8eaed; --fg2:#a6adb8; --fg3:#7a828c;
+      --bg:#1a1c1f; --bg2:#232529; --bg3:#2c2f34;
+      --line:rgba(255,255,255,.11); --accent:#4c88ff; --ok:#43b02a; --warn:#f0a020; --err:#e8554b;
+    }
+  }
+  html[data-theme="light"]{
+    --fg:#1f2329; --fg2:#646a73; --fg3:#8f959e;
+    --bg:#fff; --bg2:#f5f6f7; --bg3:#e8eaed;
+    --line:rgba(0,0,0,.10); --accent:#3370ff;
+    --shadow:0 2px 10px rgba(0,0,0,.06);
+    --hover:rgba(0,0,0,.035);
+  }
+  html[data-theme="dark"]{
+    --fg:#e8eaed; --fg2:#a6adb8; --fg3:#7a828c;
+    --bg:#1a1c1f; --bg2:#232529; --bg3:#2c2f34;
+    --line:rgba(255,255,255,.11); --accent:#4c88ff;
+    --shadow:0 2px 10px rgba(0,0,0,.28);
+    --hover:rgba(255,255,255,.045);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+       font-size:13px;-webkit-font-smoothing:antialiased;overflow:hidden}
+
+  /* ---------- 顶栏 ---------- */
+  .top{display:flex;align-items:center;gap:10px;padding:0 18px;border-bottom:1px solid var(--line);
+       background:var(--bg);height:48px;box-shadow:0 1px 0 rgba(0,0,0,.02)}
+  .stat{font-size:12.5px;color:var(--fg2);display:flex;align-items:center;gap:6px;font-weight:500}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--ok);flex-shrink:0}
+  .dot.warn{background:var(--warn)} .dot.err{background:var(--err)} .dot.idle{background:var(--fg3)}
+  .top .sp{flex:1}
+  .lnk{font-size:12px;color:var(--accent);cursor:pointer;background:none;border:0;
+       padding:5px 3px;font-family:inherit}
+  .lnk:hover{text-decoration:underline}
+  .lnk:disabled{color:var(--fg3);cursor:default;text-decoration:none}
+
+  /* ---------- 布局 ---------- */
+  .layout{display:grid;grid-template-columns:172px 1fr;height:calc(100% - 48px)}
+  @media(max-width:860px){.layout{grid-template-columns:150px 1fr}}
+
+  /* ---------- 左侧五项菜单 ---------- */
+  .side{border-right:1px solid var(--line);overflow-y:auto;padding:8px 0;background:var(--bg)}
+  .nav{display:flex;align-items:center;gap:10px;padding:10px 16px;cursor:pointer;
+       color:var(--fg2);font-size:13.5px;border:0;background:none;width:100%;
+       font-family:inherit;text-align:left;position:relative}
+  .nav:hover{background:var(--bg2);color:var(--fg)}
+  .nav.on{color:var(--accent);font-weight:600;background:var(--bg2)}
+  .nav.on::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2.5px;background:var(--accent)}
+  .nav svg{width:17px;height:17px;flex-shrink:0;stroke:currentColor;fill:none;
+           stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+  /* ---------- 主区 ---------- */
+  .page{overflow-y:auto;padding:18px 22px 28px}
+  .page[hidden]{display:none}
+  /* 工作台页面自身不滚，交给左右两栏各自滚 */
+  .page-flush{padding:16px 18px;overflow:hidden;display:flex;flex-direction:column;min-height:0}
+
+  /* ---------- 频道工作台：左播放器 / 右频道列表 ---------- */
+  .wb{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px;
+      flex:1;min-height:0}
+  .wb-main{display:flex;flex-direction:column;min-width:0;min-height:0;overflow-y:auto;
+           padding-right:2px;scrollbar-width:thin;scrollbar-color:var(--bg3) transparent}
+  .wb-main::-webkit-scrollbar{width:7px}
+  .wb-main::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:4px}
+  .wb-side{display:flex;flex-direction:column;min-height:0;
+           border-left:1px solid var(--line);padding-left:16px}
+  .wb-head{flex-shrink:0}
+  .chlist-scroll{flex:1;min-height:0;overflow-y:auto;padding-right:8px;
+                 scrollbar-width:thin;scrollbar-color:var(--bg3) transparent}
+  .chlist-scroll::-webkit-scrollbar{width:9px}
+  .chlist-scroll::-webkit-scrollbar-track{background:transparent}
+  .chlist-scroll::-webkit-scrollbar-thumb{background:var(--fg3);border-radius:4px;opacity:.5}
+  .chlist-scroll:hover::-webkit-scrollbar-thumb{background:var(--accent)}
+  .chlist-scroll::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:4px}
+  @media(max-width:1000px){
+    .wb{grid-template-columns:1fr;grid-template-rows:auto 1fr}
+    .wb-side{border-left:0;border-top:1px solid var(--line);padding-left:0;padding-top:12px}
+    .wb-main{overflow:visible}
+  }
+  h2{font-size:16px;font-weight:600;margin:0 0 4px}
+  .sub{font-size:12px;color:var(--fg3);margin-bottom:16px;line-height:1.7}
+
+  /* 直播页 */
+  .player-wrap{background:#0b0d10;border-radius:12px;overflow:hidden;position:relative;
+               aspect-ratio:16/9;max-height:min(46vh,420px);width:100%;
+               display:flex;align-items:center;justify-content:center;
+               box-shadow:var(--shadow);border:1px solid var(--line)}
+  .player-wrap video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
+  .ph{color:#9aa1ab;font-size:12.5px;text-align:center;line-height:1.7;padding:14px;
+      letter-spacing:.2px;max-width:560px}
+  .ph b{color:#c9cfd8;font-weight:500}
+  /* 未播放时播放器不需要占满 16:9 的大黑块，收窄高度减少压迫感 */
+  .player-wrap.idle{aspect-ratio:auto;min-height:126px;max-height:210px;
+    background:radial-gradient(ellipse at 50% 45%, #1d2129 0%, #12151a 70%)}
+  /* 播放器提示区里的操作按钮组（黑屏时的出口） */
+  .phacts{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:11px}
+  .phacts .btn{padding:6px 11px;font-size:12px}
+  .phacts .btn{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.18);
+               color:#d6dbe3}
+  .phacts .btn:hover{background:rgba(255,255,255,.14);color:#fff;
+                     border-color:rgba(255,255,255,.3)}
+  .phacts .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .phacts .btn.primary:hover{filter:brightness(1.1);color:#fff}
+  /* 播放规格条：紧贴播放器下方，只在真正播放时出现。
+     未探测到 / 探测中 / 探测失败都有明确文字，不留空白。 */
+  .specbar{display:flex;align-items:center;gap:7px;flex-wrap:wrap;
+           margin-top:10px;padding:9px 12px;border-radius:9px;
+           background:var(--bg2);border:1px solid var(--line)}
+  .specbar[hidden]{display:none}
+  .sp-item{display:inline-flex;align-items:baseline;gap:5px;font-size:12px;
+           color:var(--fg2);padding:0 2px}
+  .sp-item .k{font-size:10.5px;color:var(--fg3)}
+  .sp-item .v{font-weight:500;color:var(--fg);font-variant-numeric:tabular-nums}
+  .sp-sep{color:var(--bg3);font-size:11px;user-select:none}
+  .sp-tag{font-size:10.5px;color:var(--accent);border:1px solid var(--accent);
+          border-radius:3px;padding:0 4px;line-height:1.5;opacity:.9}
+  .sp-loading{font-size:12px;color:var(--fg3);display:inline-flex;align-items:center;gap:6px}
+  .pbar{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
+  .pbar .now{flex:1;min-width:180px;font-size:13px;color:var(--fg2)}
+  .pbar .now b{color:var(--fg);font-weight:600}
+
+  /* 节目源页
+     左右两栏各自内部滚动，不互相撑高。
+     关键：grid 行高必须是 minmax(0,1fr)，否则行高会被最长的列（频道列表）
+     撑到几千 px，右栏详情也跟着被拉成一整条空白长条。 */
+  /* 页面本身做成纵向 flex：标题占多少，剩下的才给 .split。
+     否则 .split 的 height:100% 会按整个内容盒算，再加上标题高度就溢出。 */
+  .search{width:100%;background:var(--bg2);border:1px solid var(--line);color:var(--fg);
+          border-radius:var(--r);padding:8px 11px;font-size:13px;font-family:inherit;
+          outline:none;margin-bottom:10px}
+  .search:focus{border-color:var(--accent);background:var(--bg)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px}
+  .item{display:flex;gap:9px;align-items:center;padding:9px 16px 9px 10px;
+        border-radius:var(--r);cursor:pointer;border:1px solid transparent;
+        transition:background .12s,border-color .12s}
+  .item:hover{background:var(--hover);border-color:var(--line)}
+  /* 正在播放：左侧加一条强调竖线，比重边框更轻、更好认 */
+  .item.on{background:var(--hover);border-color:var(--accent);
+           box-shadow:inset 2.5px 0 0 var(--accent)}
+  .item.on .nm b{color:var(--accent)}
+
+  /* 分组展示：每个分组一段，带分组标题与频道数 */
+  .gsec{margin-bottom:6px}
+  .gh{display:flex;align-items:center;gap:8px;padding:9px 2px 6px;
+      position:sticky;top:0;z-index:2;background:var(--bg);
+      backdrop-filter:blur(6px)}
+  .gh b{font-size:12.5px;font-weight:600;color:var(--fg)}
+  .gh i{flex:1;height:1px;background:var(--line);font-style:normal}
+  .gh em{font-style:normal;font-size:11px;color:var(--fg3);font-variant-numeric:tabular-nums}
+  .gh .fold{background:none;border:0;color:var(--fg3);cursor:pointer;font-size:11px;
+            padding:2px 4px;font-family:inherit}
+  .gh .fold:hover{color:var(--accent)}
+  .gsec.folded .grid{display:none}
+  .cnt{font-weight:400;color:var(--fg3);font-size:10.5px;margin-left:8px}
+
+  /* 搜索行 + 收藏筛选 + 全部展开/折叠 */
+  .srow{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+  .srow .search{margin-bottom:0;flex:1;min-width:0}
+  .starBtn,.allBtn{white-space:nowrap;font-size:12px;padding:7px 10px}
+  .starBtn.on{color:#e8b339;border-color:#e8b339}
+  .allBtn{color:var(--fg2)}
+  .item .fav{position:absolute;top:4px;right:5px;font-size:11px;color:var(--fg3);
+             line-height:1;padding:2px;opacity:0;transition:opacity .12s}
+  .item{position:relative}
+  .item:hover .fav{opacity:1}
+  .item .fav.on{opacity:1;color:#e8b339}
+  /* 4K 徽标：列表项右上角，与收藏星错开 */
+  .item .u4k{position:absolute;top:4px;right:24px;font-size:9.5px;font-weight:600;
+             color:#fff;background:var(--accent);border-radius:3px;
+             padding:0 3px;line-height:1.5;letter-spacing:.2px}
+  .item .u4k.zhx{background:#8a6bd1;right:24px}
+  .gbadge{font-size:9px;font-weight:700;color:#fff;background:var(--accent);
+          border-radius:3px;padding:1px 4px;letter-spacing:.3px;flex-shrink:0}
+  .gsec.uhd .gh b{color:var(--accent)}
+
+  /* 节目单面板：头部固定不滚 + 列表独立滚动
+     三个关键点（对应「EPG 叠放」与「至少 5 行」两条要求）：
+       ① .epgpanel 是 flex 纵向容器，height 由剩余空间决定，不再写死 110px；
+       ② .epghead 用 position:sticky 固定，且必须带不透明背景
+          （否则列表滚过时台标区会「透出」下面文字，看起来就是叠放）；
+       ③ .plist 用 flex:1 + overflow-y:auto 自己滚，只有它滚，
+          台标区永远在顶上，背景不露底。
+     5 行保障：单行 30px 高 × 5 = 150px，加上头部 56px，
+     故头部+列表的可用高度下限设成 min-height:210px。 */
+  .epgpanel{display:flex;flex-direction:column;min-height:210px;flex:1;
+            margin-top:11px;border:1px solid var(--line);border-radius:11px;
+            background:var(--bg2);overflow:hidden}
+  /* 没有选频道时不抢占剩余空间：空状态只要一行提示，
+     否则在 720px 高的窗口里会撑出 450px 的死白，看着头轻脚重。 */
+  .epgpanel.is-empty{flex:0 0 auto;min-height:0}
+  /* 头部两行布局：
+       第一行 台标 + 频道名/元信息（占满宽度，超长省略）
+       第二行 日期条单独一行、可横向滚动
+     原来把日期条塞在第一行右侧，窄窗口下会把频道名挤成「台号 100 · H...」并被按钮盖住。 */
+  .epghead{padding:9px 13px 0;background:var(--bg2);
+           border-bottom:1px solid var(--line);
+           position:sticky;top:0;z-index:3;flex-shrink:0}
+  .epghead .top{display:flex;gap:10px;align-items:center;min-width:0}
+  .epghead .lg{width:58px;height:36px}
+  .epghead .tt{min-width:0;flex:1 1 auto;overflow:hidden}
+  .epghead b{display:block;font-size:13.5px;font-weight:600;color:var(--fg);
+             white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .epghead .mt{font-size:11px;color:var(--fg3);margin-top:2px;
+               white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .epghead .days{display:flex;gap:7px;flex-wrap:nowrap;overflow-x:auto;
+                 padding:8px 0 8px;scrollbar-width:none}
+  .epghead .days::-webkit-scrollbar{display:none}
+  .dbtn{background:var(--bg);border:1px solid var(--line);color:var(--fg2);
+        border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer;
+        font-family:inherit;line-height:1.5;transition:all .12s;white-space:nowrap}
+  .dbtn:hover{border-color:var(--accent);color:var(--accent)}
+  .dbtn.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:500}
+  /* 可回看标记：一个小圆点，比「↩」干净，也不占宽度 */
+  .dbtn{position:relative}
+  .dbtn .rvd{position:absolute;top:2px;right:3px;width:4px;height:4px;
+             border-radius:50%;background:var(--accent);display:block}
+  .dbtn.on .rvd{background:#fff}
+
+  .plist{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;
+         padding:4px 8px 14px;scrollbar-width:thin;scrollbar-color:var(--bg3) transparent;
+         font-size:12.5px}
+  .plist::-webkit-scrollbar{width:7px}
+  .plist::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:4px}
+
+  /* 旧的 epgbox 样式保留（节目单在别处的紧凑展示仍在用） */
+  .epgbox{border:1px solid var(--line);border-radius:11px;margin-top:11px;
+          padding:11px 13px;background:var(--bg2);max-height:200px;overflow-y:auto;
+          scrollbar-width:thin;scrollbar-color:var(--bg3) transparent}
+  .epgbox .hd{display:flex;gap:9px;align-items:center;margin-bottom:7px;
+              position:sticky;top:-9px;background:var(--bg2);padding:2px 0}
+  .epgbox .hd .lg{width:38px;height:26px}
+  .epgbox .hd b{font-size:12.5px;font-weight:600;color:var(--fg)}
+  .epgbox .hd span{font-size:11px;color:var(--fg3)}
+  .epgbox .p{font-size:12px}
+
+  /* 台标：按 tone 自适应底色（运营商台标多为透明底白字，必须深底才可见） */
+  /* 台标框：运营商台标多为 200x68（≈2.94:1 宽屏），
+     框太窄会把图压到十几像素高，文字必然发虚。
+     这里按接近原图比例给足空间，并关掉缩放模糊。 */
+  .lg{width:58px;height:36px;flex-shrink:0;border-radius:5px;display:flex;
+      align-items:center;justify-content:center;overflow:hidden;padding:2px}
+  .lg img{max-width:100%;max-height:100%;object-fit:contain;display:block;
+          image-rendering:-webkit-optimize-contrast;image-rendering:auto}
+  .lg.t-light{background:#16191d}
+  .lg.t-dark{background:#eef0f2}
+  .lg.t-none{background:var(--bg3);font-size:9px;color:var(--fg3)}
+
+  .nm{min-width:0;flex:1}
+  .nm b{display:block;font-weight:500;font-size:13px;white-space:nowrap;
+        overflow:hidden;text-overflow:ellipsis;color:var(--fg)}
+  .nm span{display:block;font-size:11.5px;color:var(--fg2);margin-top:3px;
+           white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  /* 详情面板 */
+  .det{border:1px solid var(--line);border-radius:10px;padding:14px 14px 22px;
+       overflow-y:auto;min-height:0;max-height:none;
+       scrollbar-width:thin;scrollbar-color:var(--bg3) transparent}
+  .det::-webkit-scrollbar{width:8px}
+  .det::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:4px}
+  .dh{display:flex;gap:11px;align-items:center;margin-bottom:13px}
+  .dh .lg{width:62px;height:42px}
+  .dh b{font-size:15px;font-weight:600;display:block}
+  .dh .meta{font-size:11.5px;color:var(--fg3);margin-top:3px}
+  .card{background:var(--bg2);border-radius:var(--r);padding:10px 11px;margin-bottom:11px}
+  .card .k{font-size:10.5px;color:var(--fg3);margin-bottom:3px}
+  .card .v{font-size:13px;font-weight:500;color:var(--fg)}
+  .card .t{font-size:11px;color:var(--fg3);margin-top:2px;font-variant-numeric:tabular-nums}
+  .prog{height:2px;background:var(--bg3);border-radius:1px;margin-top:7px;overflow:hidden}
+  .prog i{display:block;height:100%;background:var(--accent)}
+  .sec{font-size:11px;color:var(--fg3);margin:14px 0 7px;font-weight:500}
+  .row{display:flex;gap:6px;margin-bottom:6px}
+  .row input{flex:1;min-width:0;background:var(--bg2);border:1px solid var(--line);
+             color:var(--fg2);border-radius:6px;padding:6px 8px;font-size:11px;
+             font-family:ui-monospace,SFMono-Regular,Menlo,monospace;outline:none}
+  .row button, .btn{background:var(--bg2);border:1px solid var(--line);color:var(--fg2);
+         border-radius:7px;padding:8px 13px;font-size:12.5px;cursor:pointer;
+         font-family:inherit;flex-shrink:0;transition:all .14s;line-height:1.4}
+  .btn:hover, .row button:hover{border-color:var(--accent);color:var(--fg);background:var(--hover)}
+  .btn:active{transform:translateY(.5px)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:500}
+  .btn.primary:hover{filter:brightness(1.08);color:#fff}
+  .row button:hover,.btn:hover{color:var(--accent);border-color:var(--accent)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:500}
+  .btn.primary:hover{opacity:.88;color:#fff}
+  .btn:disabled{opacity:.5;cursor:default}
+
+  /* 节目单行：单行高 30px，保证 5 行可见（5×30=150px + 头部 56px ≈ 210px）。
+     改用 flex 布局让时间列固定宽度、节目名占满剩余，长名省略号。 */
+  .p{display:flex;gap:9px;padding:6px 6px;border-radius:5px;line-height:1.45;
+     min-height:30px;align-items:center}
+  .p:hover{background:var(--bg2)}
+  .p.now{background:var(--bg2);box-shadow:inset 2px 0 0 var(--accent)}
+  .p.now .b{font-weight:600;color:var(--fg)}
+  .p .a{color:var(--fg3);flex-shrink:0;width:76px;font-size:11px;
+        font-variant-numeric:tabular-nums;white-space:nowrap}
+  .p .b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .p.past .b{color:var(--fg2)}
+  .p.clickable{cursor:pointer}
+  .p.clickable:hover{background:var(--bg3)}
+  .p.clickable:hover .b{color:var(--accent)}
+  .p .rv{flex-shrink:0;font-size:10px;color:var(--accent);border:1px solid var(--accent);
+         border-radius:3px;padding:0 3px;line-height:1.35;opacity:.85}
+  /* 跨天分隔：回看列表按天分组，日期做成分隔条 */
+  .pday{font-size:10.5px;color:var(--fg3);padding:8px 6px 3px;font-weight:600;
+        position:sticky;top:0;background:var(--bg2);z-index:1;
+        border-bottom:1px solid var(--line);margin-bottom:3px}
+  .pday:first-child{padding-top:2px}
+  .pempty{font-size:12px;color:var(--fg3);padding:14px 10px;text-align:center}
+
+  /* 立即更新行的布局：上次更新靠左、按钮靠右分开，按钮不再贴在最左。
+     「稍靠右」按视觉要求实现为左信息 + 右按钮的推挤摆放。 */
+  .updrow{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .updrow .lastupd{display:flex;align-items:baseline;gap:8px;
+                   margin-right:auto;flex-shrink:0}
+  .updrow .lastupd .k{font-size:11.5px;color:var(--fg3)}
+  .updrow .lastupd .v{font-size:13px;font-weight:500;color:var(--fg);
+                      font-variant-numeric:tabular-nums;
+                      font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .updrow #btnUpd2{margin-left:6px}
+
+  /* 定时更新页 */
+  .panel{background:var(--bg2);border-radius:10px;padding:16px 18px;margin-bottom:14px}
+  .panel h3{font-size:13.5px;font-weight:600;margin:0 0 12px}
+  .frm{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .frm label{font-size:13px;color:var(--fg2)}
+  .sw{position:relative;width:42px;height:23px;flex-shrink:0}
+  .sw input{opacity:0;width:0;height:0;position:absolute}
+  .sw span{position:absolute;inset:0;background:var(--bg3);border-radius:23px;
+           cursor:pointer;transition:.2s}
+  .sw span::before{content:"";position:absolute;width:17px;height:17px;left:3px;top:3px;
+                   background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+  .sw input:checked + span{background:var(--accent)}
+  .sw input:checked + span::before{transform:translateX(19px)}
+  .sw input:disabled + span{opacity:.45;cursor:default}
+  input[type=time]{background:var(--bg);border:1px solid var(--line);color:var(--fg);
+       border-radius:6px;padding:6px 9px;font-size:13px;font-family:inherit;outline:none}
+  input[type=time]:disabled{opacity:.45}
+  input[type=time]:focus{border-color:var(--accent)}
+
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+  .st{background:var(--bg);border-radius:8px;padding:11px 13px;border:1px solid var(--line)}
+  .st .k{font-size:11px;color:var(--fg3);margin-bottom:5px}
+  .st .v{font-size:17px;font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums}
+  .st .v.sm{font-size:13.5px;font-weight:500}
+  .st .u{font-size:11px;color:var(--fg3);margin-left:2px;font-weight:400}
+
+  /* 播放器接入页 */
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:14px;flex-wrap:wrap}
+  .tab{background:none;border:0;border-bottom:2px solid transparent;color:var(--fg2);
+       padding:8px 13px;font-size:13px;cursor:pointer;font-family:inherit;margin-bottom:-1px}
+  .tab:hover{color:var(--fg)}
+  .tab.on{color:var(--accent);border-bottom-color:var(--accent);font-weight:500}
+  .addr{display:flex;gap:7px;margin-bottom:9px}
+  .addr input{flex:1;min-width:0;background:var(--bg2);border:1px solid var(--line);
+       color:var(--fg2);border-radius:6px;padding:8px 10px;font-size:11.5px;
+       font-family:ui-monospace,SFMono-Regular,Menlo,monospace;outline:none}
+  ol.steps,ul.pts{margin:0;padding-left:20px;line-height:2;font-size:13px;color:var(--fg2)}
+  ol.steps b,ul.pts b{color:var(--fg)}
+  .note{background:var(--bg2);border-left:2.5px solid var(--warn);border-radius:0 6px 6px 0;
+        padding:9px 12px;font-size:12.5px;color:var(--fg2);line-height:1.8;margin:12px 0}
+
+  /* 软件介绍页 */
+  /* grid-auto-rows:1fr 让所有行等高，避免第一行 117px / 第二行 139px 的错落 */
+  .feat{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:11px;
+        grid-auto-rows:1fr}
+  /* 不该被行尾拆开的短语：数字+量词、括号注释、IP、格式名 */
+  .nb{white-space:nowrap}
+  .f{background:var(--bg2);border-radius:9px;padding:13px 15px;
+     display:flex;flex-direction:column}
+  .f .h{font-size:13px;font-weight:600;margin-bottom:5px;display:flex;align-items:center;gap:7px}
+  .f .h i{width:6px;height:6px;border-radius:50%;background:var(--accent);flex-shrink:0}
+  .f p{margin:0;font-size:12.5px;color:var(--fg2);line-height:1.8}
+  .kv{font-size:12.5px;line-height:2.2;color:var(--fg2)}
+  .kv b{display:inline-block;min-width:78px}
+  .kv .frow{display:flex;gap:8px;padding:5px 0;border-bottom:1px dashed var(--line)}
+  .kv .frow:last-child{border-bottom:0}
+  .kv .frow .t{flex-shrink:0;width:84px;font-weight:600;color:var(--fg)}
+  .kv .frow .c{flex:1;min-width:0;line-height:1.9}
+  .kv code{background:var(--bg3);padding:1px 5px;border-radius:4px;font-size:11.5px}
+  .kv b{color:var(--fg);display:inline-block;min-width:86px}
+
+  .empty{color:var(--fg3);text-align:center;padding:26px 12px;font-size:12.5px}
+  #tip{position:fixed;left:50%;bottom:20px;transform:translateX(-50%) translateY(70px);
+       background:var(--bg2);border:1px solid var(--line);color:var(--fg);border-radius:var(--r);
+       padding:9px 16px;font-size:12.5px;opacity:0;transition:.24s;z-index:99;
+       pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,.14);max-width:80vw}
+  #tip.on{opacity:1;transform:translateX(-50%) translateY(0)}
+  .spin{display:inline-block;width:10px;height:10px;border:1.5px solid var(--fg3);
+        border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  code{background:var(--bg3);padding:1px 5px;border-radius:4px;font-size:11.5px;
+       font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <span class="stat"><span class="dot idle" id="dot"></span><span id="st">加载中…</span></span>
+  <span class="stat" id="meta" style="color:var(--fg3)"></span>
+  <span class="sp"></span>
+</div>
+
+<div class="layout">
+  <!-- ============ 左侧五项菜单 ============ -->
+  <div class="side">
+    <button class="nav on" data-p="live">
+      <svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="13" rx="2.5"/><path d="M8 2.5 12 6l4-3.5"/><path d="M10 10.5v4l3.5-2z"/></svg>
+      直播
+    </button>
+    <button class="nav" data-p="sched">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5.5l3.5 2"/></svg>
+      定时更新
+    </button>
+    <button class="nav" data-p="player">
+      <svg viewBox="0 0 24 24"><rect x="2.5" y="4" width="14" height="10" rx="2"/><path d="M6 18h7"/><path d="M9.5 14v4"/><path d="M19 9v7l-3.5-3.5z"/></svg>
+      播放器接入
+    </button>
+    <button class="nav" data-p="about">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 15.5v-4"/><path d="M12 8.2v.1"/></svg>
+      软件介绍
+    </button>
+  </div>
+
+  <!-- ============ 1. 直播（播放器 + 频道列表 一体化工作台） ============ -->
+  <div class="page page-flush" id="pg-live">
+    <div class="wb">
+      <!-- 左栏：播放器（固定）+ 规格 + 当前频道节目单（独立滚动） -->
+      <div class="wb-main">
+        <div class="player-wrap idle" id="pw">
+          <div class="ph" id="ph">
+            <svg viewBox="0 0 24 24" style="width:30px;height:30px;stroke:#5a626c;fill:none;stroke-width:1.6;display:block;margin:0 auto 10px"><rect x="2" y="5" width="20" height="14" rx="2.5"/><path d="M10 9.5v5l4.5-2.5z"/></svg>
+            从右侧选择频道开始播放
+          </div>
+          <video id="vid" controls playsinline style="display:none"></video>
+        </div>
+        <div class="specbar" id="specBar" hidden></div>
+        <div class="pbar">
+          <div class="now" id="liveNow" style="color:var(--fg3)">未选择频道</div>
+          <button class="btn" id="btnPrev" title="上一个频道">上一个</button>
+          <button class="btn" id="btnNext" title="下一个频道">下一个</button>
+          <button class="btn" id="btnStop">停止</button>
+          <button class="btn" id="btnCopyLive">复制地址</button>
+          <button class="btn" id="btnOpenLive" title="在新标签/外部播放器打开当前流">外部打开</button>
+        </div>
+
+        <!-- 节目单面板：头部（台标/频道名/日期切换）固定不滚，只有下面的列表滚。
+             高度用 flex 撑满剩余空间，保证至少 5 行节目可见。 -->
+        <div class="epgpanel is-empty" id="liveEpg">
+          <div class="empty" style="padding:18px;font-size:12.5px;color:var(--fg3)">
+            选择频道后在此显示节目单，已播出的节目可点击回看
+          </div>
+        </div>
+      </div>
+
+      <!-- 右栏：搜索 + 分组频道列表（独立滚动） -->
+      <div class="wb-side">
+        <div class="wb-head">
+          <div class="sec" style="margin:0 0 7px">频道<span id="chSum" class="cnt"></span></div>
+          <div class="srow" style="margin-bottom:0">
+            <input class="search" id="liveQ" placeholder="搜索频道名 / 台号" />
+            <button class="btn allBtn" id="allToggle" title="展开或折叠所有分组">全部展开</button>
+            <button class="btn starBtn" id="favOnly" title="只看已收藏的频道">★ 收藏</button>
+          </div>
+        </div>
+        <div id="liveList" class="chlist-scroll"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 3. 定时更新 ============ -->
+  <div class="page" id="pg-sched" hidden>
+    <h2>定时更新</h2>
+    <div class="sub">设定每天自动更新的时间，或关闭定时更新改为手动。修改立即生效。</div>
+
+    <div class="panel">
+      <h3>自动更新</h3>
+      <div class="frm">
+        <div class="sw">
+          <input type="checkbox" id="swOn" />
+          <span></span>
+        </div>
+        <label for="swOn" id="swTxt">已开启</label>
+        <span style="width:1px;height:20px;background:var(--line)"></span>
+        <label for="tm">每天</label>
+        <input type="time" id="tm" step="60" />
+        <button class="btn primary" id="btnSaveSch">保存</button>
+        <span id="schNext" style="font-size:12px;color:var(--fg3)"></span>
+      </div>
+    </div>
+
+    <!-- 立即更新：左侧显示上次更新时间，右侧放按钮 -->
+    <div class="panel">
+      <h3>立即更新</h3>
+      <div class="updrow">
+        <div class="lastupd">
+          <span class="k">上次更新</span>
+          <span class="v" id="lastUpd">—</span>
+        </div>
+        <button class="btn primary" id="btnUpd2">立即更新</button>
+        <span id="updHint" style="font-size:12px;color:var(--fg3)"></span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>当前状态</h3>
+      <div class="stats">
+        <div class="st"><div class="k">文件更新时间</div><div class="v sm" id="stTime">—</div></div>
+        <div class="st"><div class="k">总频道数</div><div class="v" id="stCh">—<span class="u">个</span></div></div>
+        <div class="st"><div class="k">支持回看频道</div><div class="v" id="stBack">—<span class="u">个</span></div></div>
+        <div class="st"><div class="k">4K 频道</div><div class="v" id="stUhd">—<span class="u">个</span></div></div>
+        <div class="st"><div class="k">节目单条数</div><div class="v" id="stProg">—</div></div>
+      </div>
+      <div class="sec">最近更新记录</div>
+      <pre id="logs" style="margin:0;background:var(--bg);border:1px solid var(--line);
+           border-radius:7px;padding:10px 12px;font-size:11px;line-height:1.75;
+           max-height:210px;overflow:auto;color:var(--fg2);white-space:pre-wrap;
+           font-family:ui-monospace,SFMono-Regular,Menlo,monospace">—</pre>
+    </div>
+  </div>
+
+  <!-- ============ 4. 播放器接入 ============ -->
+  <div class="page" id="pg-player" hidden>
+    <h2>播放器接入</h2>
+    <div class="sub">在电视或手机播放器里填入下面的地址即可。地址固定不变，内容每天自动更新。</div>
+
+    <div class="tabs" id="pTabs">
+      <button class="tab on" data-t="fongmi">FongMi TV</button>
+      <button class="tab" data-t="ku9">酷9 / 电视直播</button>
+      <button class="tab" data-t="tvbox">TVBox / 影视仓</button>
+      <button class="tab" data-t="diyp">DIYP</button>
+      <button class="tab" data-t="kodi">Kodi</button>
+      <button class="tab" data-t="tg">天光云影</button>
+    </div>
+
+    <div id="pfongmi" class="ptab">
+      <div class="sec">配置地址（一条地址搞定直播 + 回看 + 节目单）</div>
+      <div class="addr"><input readonly id="u_fongmi" /><button class="btn" data-c="u_fongmi">复制</button></div>
+      <ol class="steps">
+        <li>打开 <b>FongMi TV</b>（5.x）→「设置」→「配置」→「添加配置」</li>
+        <li>粘贴上面的地址并确认，返回首页即可看到全部频道</li>
+        <li>节目单自动按「频道 + 当天」加载，<b>不需要另外填 EPG</b></li>
+      </ol>
+      <div class="note">FongMi 走的是<b>自己的按天 JSON 节目单接口</b>
+        （<code>epg/&lt;频道&gt;/&lt;日期&gt;.json</code>），与 TVBox 的 XMLTV 不通用，两者互不影响。
+        回看占位符用 FongMi 原生 <code>${(b)yyyyMMddHHmmss}</code> 写法。</div>
+      <div class="sec">只要直播，不要节目单</div>
+      <div class="addr"><input readonly id="u_fongmi_m3u" /><button class="btn" data-c="u_fongmi_m3u">复制</button></div>
+    </div>
+
+    <!-- 酷9 与「电视直播(mytv-android)」的回看占位符同为 ${(b)}/${(e)}，
+         所以两者共用 fongmi.m3u；区别只在菜单路径与 EPG 解析格式。 -->
+    <div id="pku9" class="ptab" hidden>
+      <div class="sec">直播源地址（列表订阅）</div>
+      <div class="addr"><input readonly id="u_ku9" /><button class="btn" data-c="u_ku9">复制</button></div>
+      <div class="sec">EPG 节目单地址</div>
+      <div class="addr"><input readonly id="u_epg_ku9" /><button class="btn" data-c="u_epg_ku9">复制</button></div>
+      <ol class="steps">
+        <li><b>酷9</b>：菜单键或右上角 →「设置」→「列表配置」→「列表订阅」→ 填名字和上面的直播源地址 → 确定</li>
+        <li><b style="color:var(--warn)">再点一下刚加的这条订阅</b>才会生效（这一步最容易漏）</li>
+        <li>「设置」→「列表配置」→「EPG 订阅」→ 填 EPG 地址</li>
+        <li>点一下这条 EPG → 把<b>「解析格式」改成 XmlTV</b> → 确定</li>
+        <li><b>电视直播（mytv-android）</b>：「设置」→「订阅源与节目单」→「订阅源」→「添加其他订阅源」→ 填同一个地址；
+            节目单在「节目单地址」里添加，格式会自动识别为 XMLTV</li>
+      </ol>
+      <div class="note">这两个软件的回看占位符都是 <code>${(b)…}</code> 写法，
+        所以统一用这一条 M3U（<code>fongmi.m3u</code>）即可，<b>不要</b>换成 <code>kodi.m3u</code>。
+        酷9 的 EPG 默认按 DIYP 格式解析，<b>必须手动改成 XmlTV</b>，否则节目单一直空着。</div>
+    </div>
+
+    <div id="ptvbox" class="ptab" hidden>
+      <div class="sec">配置地址（填在 TVBox 的配置/订阅处）</div>
+      <div class="addr"><input readonly id="u_tvbox" /><button class="btn" data-c="u_tvbox">复制</button></div>
+      <ol class="steps">
+        <li>打开 <b>TVBox / 影视仓</b>，进入「设置」→「配置地址」</li>
+        <li>粘贴上面的地址，确定后返回首页</li>
+        <li>直播入口里会出现全部频道，节目单自动加载</li>
+      </ol>
+      <div class="note">这条地址是「一条包全部」：直播、节目单、台标都在里面，不需要分开填。</div>
+    </div>
+
+    <div id="pdiyp" class="ptab" hidden>
+      <div class="sec">节目地址</div>
+      <div class="addr"><input readonly id="u_diyp" /><button class="btn" data-c="u_diyp">复制</button></div>
+      <div class="sec">EPG 接口</div>
+      <div class="addr"><input readonly id="u_epg3" /><button class="btn" data-c="u_epg3">复制</button></div>
+      <ol class="steps">
+        <li>打开 <b>DIYP</b>，进入「设置」→「接口设置」</li>
+        <li>「节目地址」填上面的直播源地址，「EPG 接口」填 EPG 地址</li>
+        <li>返回重新加载频道</li>
+      </ol>
+      <div class="note">DIYP 用 <code>{start}</code> / <code>{end}</code> 回看变量，标准文件（<code>iptv.m3u8</code>）即可。
+        DIYP 自身也支持它专有的 EPG JSON 接口，但直接填这里的 XMLTV 地址同样能正常显示。</div>
+    </div>
+
+    <div id="pkodi" class="ptab" hidden>
+      <div class="sec">PVR IPTV Simple 用的 M3U</div>
+      <div class="addr"><input readonly id="u_kodi" /><button class="btn" data-c="u_kodi">复制</button></div>
+      <div class="sec">EPG（XMLTV）</div>
+      <div class="addr"><input readonly id="u_epg2" /><button class="btn" data-c="u_epg2">复制</button></div>
+      <ol class="steps">
+        <li>先装插件 <b>PVR IPTV Simple Client</b></li>
+        <li>「设置」→「General」→ M3U 播放列表填上面的地址（对应 <code>kodi.m3u</code>）</li>
+        <li>「EPG 设置」→ XMLTV 填上面的 EPG 地址</li>
+        <li>重启 Kodi，在「电视 → 频道」里即可看到</li>
+      </ol>
+      <div class="note">这个文件的回看变量是 <code>${start}</code> / <code>${end}</code>，只给 Kodi 用。
+        是否显示回看取决于插件版本，直播本身不受影响。</div>
+    </div>
+
+    <div id="ptg" class="ptab" hidden>
+      <div class="sec">直播源地址</div>
+      <div class="addr"><input readonly id="u_tg" /><button class="btn" data-c="u_tg">复制</button></div>
+      <ol class="steps">
+        <li>打开 <b>天光云影</b> →「设置」→「直播源」→「自定义直播源」→「添加其他直播源」</li>
+        <li>屏幕会显示一个局域网地址和二维码，<b>在同一局域网的电脑浏览器</b>打开该地址</li>
+        <li>填名称，把上面的地址贴进「链接」，点「推送直播源」</li>
+        <li>回到「设置」→「直播源」，选中刚推的这条并<b>「设为当前」</b></li>
+        <li>节目单：「设置」→「自定义节目单」，填本页 EPG 地址</li>
+      </ol>
+      <div class="note">天光云影的导入是<b>扫码/网页推送</b>，不是填接口框，和 DIYP 不是一套流程。
+        另外它<b>不支持回看</b>：M3U 里的 catchup 属性会被忽略，只能看直播。
+        该项目已停止维护（最后版本 3.3.9），长期使用建议换酷9 或电视直播。</div>
+    </div>
+
+    <div class="panel" style="margin-top:18px">
+      <h3>选哪个</h3>
+      <div class="kv">
+        <div class="frow"><div class="t">电视盒子</div><div class="c">
+          <b>酷9</b> 或 <b>电视直播</b>。都支持 M3U + XMLTV + 回看，装完填两行地址即可；
+          酷9 记得把 EPG 解析格式改成 XmlTV
+        </div></div>
+        <div class="frow"><div class="t">手机 / 平板</div><div class="c">
+          <b>FongMi TV</b>。一条配置地址全包，节目单不用另填
+        </div></div>
+        <div class="frow"><div class="t">影视库一体</div><div class="c">
+          <b>TVBox / 影视仓</b>。直播只是其中一个入口，适合顺便看点播
+        </div></div>
+        <div class="frow"><div class="t">4K 频道</div><div class="c">
+          M3U 里 <span data-k="uhdcount">—</span> 个 4K 台，多数是 <b>H.265/HEVC</b> 编码。
+          播放设备不支持 HEVC 时会<b>有声音、画面全黑</b>，这不是源的问题。
+          设备端一般都能硬解；本机预览若黑屏，用页面上的「切到低清晰度」降成 1080P
+        </div></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>文件清单</h3>
+      <div class="kv">
+        <div class="frow"><div class="t">FongMi</div><div class="c">
+          <code>fongmi.json</code>（配置）、<code>fongmi.m3u</code>（清单）、<code>epg/&lt;频道&gt;/&lt;日期&gt;.json</code>
+        </div></div>
+        <div class="frow"><div class="t">酷9 / 电视直播</div><div class="c">
+          用 <code>fongmi.m3u</code> + <code>epg.xml</code>
+        </div></div>
+        <div class="frow"><div class="t">TVBox</div><div class="c">
+          <code>tvbox.json</code>、<code>iptv.m3u8</code>、<code>epg.xml</code>
+        </div></div>
+        <div class="frow"><div class="t">Kodi</div><div class="c">
+          <code>kodi.m3u</code>（回看语法 <code>${start}</code>）+ <code>epg.xml</code>
+        </div></div>
+        <div class="frow"><div class="t">4K 清单</div><div class="c">
+          <code>4k.json</code>：全部真 4K 频道及其实测编码，便于单独筛选
+        </div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 5. 软件介绍 ============ -->
+  <div class="page" id="pg-about" hidden>
+    <h2>软件介绍</h2>
+    <div class="sub">从江苏移动 OTT 接口取频道表与节目单，生成能直接给播放器用的 M3U / XMLTV / TVBox 配置。</div>
+
+    <div class="feat" id="aboutFeat">
+      <div class="f"><div class="h"><i></i><span data-k="channels">—</span> 个频道</div>
+        <p><span class="nb">4K</span> <span data-k="g_uhd" class="nb">—</span>（其中真 4K
+           <span data-k="g_uhd_real" class="nb">—</span>）、
+           央视 <span data-k="g_cctv" class="nb">—</span>、
+           卫视 <span data-k="g_tv" class="nb">—</span>、
+           江苏 <span data-k="g_js" class="nb">—</span>、
+           地方 <span data-k="g_local" class="nb">—</span>。<br/>
+           其余按内容细分：影视剧场 <span data-k="g_movie" class="nb">—</span>、
+           少儿动画 <span data-k="g_kids" class="nb">—</span>、
+           体育竞技 <span data-k="g_sport" class="nb">—</span>、
+           生活纪录 <span data-k="g_life" class="nb">—</span>、
+           音乐广播 <span data-k="g_radio" class="nb">—</span>、
+           购物 <span data-k="g_shop" class="nb">—</span>。
+           台号沿用运营商下发顺序。</p></div>
+      <div class="f"><div class="h"><i></i><span data-k="catchup">—</span> 个频道可回看</div>
+        <p>只给运营商确实提供回看的频道打 <code>catchup</code> 标记，其余不打，免得播放器点开报错。
+           可回看 <span data-k="keepdays" class="nb">—</span> 天。</p></div>
+      <div class="f"><div class="h"><i></i>节目单</div>
+        <p><code>epg.xml</code> 实际写入 <span data-k="epgprog" class="nb">—</span> 条节目，
+           覆盖 <span data-k="channels2" class="nb">—</span> 个频道，按本机时区输出。</p></div>
+      <div class="f"><div class="h"><i></i>定时更新</div>
+        <p>每天 <span data-k="at" class="nb">—</span> 重建，下次 <span data-k="next">—</span>。
+           也可在「定时更新」页手动触发。对外地址不变。</p></div>
+      <div class="f"><div class="h"><i></i>台标本地化</div>
+        <p>已存 <span data-k="logos" class="nb">—</span> 个台标到本机，随服务一起提供，
+           不受外网图源影响；关闭后改回运营商原始图源。</p></div>
+      <div class="f"><div class="h"><i></i>先自检后发布</div>
+        <p>新数据先写临时目录，抽 <span data-k="samples" class="nb">—</span> 个频道实测能否拉到播放列表，
+           通过才替换正式文件；不通过就放弃本次，旧文件不动。</p></div>
+      <div class="f"><div class="h"><i></i>CDN 择优</div>
+        <p><span data-k="cdnnum" class="nb">—</span> 个候选节点，优先复用上次通过的。
+           当前 <span data-k="cdn" class="mono">—</span>。全部不通时保留上一版。</p></div>
+      <div class="f"><div class="h"><i></i>发布前隐私扫描</div>
+        <p>输出文件按 4 类规则检查：手机号、MAC、STBID、令牌字段，命中即不发布。
+           上次结果：<span data-k="privacy" class="nb">—</span>。</p></div>
+    </div>
+
+    <div class="panel" style="margin-top:18px">
+      <h3>四个页面</h3>
+      <ol class="steps">
+        <li><b>直播</b> — 左侧预览与节目单，右侧按分组选台；已播节目点一下即可回看</li>
+        <li><b>定时更新</b> — 设每天几点更新，或手动立即更新</li>
+        <li><b>播放器接入</b> — 电视盒子填一次地址，之后不用管</li>
+        <li><b>软件介绍</b> — 本页</li>
+      </ol>
+    </div>
+
+    <div class="panel">
+      <h3>说明与限制</h3>
+      <div class="kv">
+        <b>网络要求</b> 直播源由运营商按来源 IP 放行，需在江苏移动宽带下才能播；
+          其他网络下只能生成节目单与台标<br>
+        <b>4K 编码</b> 4K 频道多数是 H.265/HEVC。播放设备不支持 HEVC 时会只有声音、画面全黑，
+          这不是源坏了<br>
+        <b>不含凭据</b> 生成的文件不带账号、密码、MAC 或机顶盒绑定信息，发布前有 4 类规则强制扫描<br>
+        <b>使用范围</b> 个人自用。运营商 CDN 有并发与频次限制，请勿大规模传播<br>
+        <b>应用设置</b> 端口、地市、天数、输出模式在飞牛「应用设置」里改；改端口会自动重启服务
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="tip"></div>
+
+<script>
+const $  = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+const esc = v => String(v==null?'':v).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const p2 = n => String(n).padStart(2,'0');
+const hm = t => { const d=new Date(t*1000); return p2(d.getHours())+':'+p2(d.getMinutes()); };
+const pct = (s,e) => Math.max(0,Math.min(100,((Date.now()/1000-s)/(e-s))*100));
+
+let ST={}, CH=[], SEL=null, LIVE=null, Q={src:'',live:''}, GRP='全部', GRPS={}, PAGE='live';
+/* 频道收藏：存 localStorage，纯本机偏好，不涉及服务端数据 */
+let FAV = new Set(), FAV_ONLY = false;
+try{ FAV = new Set(JSON.parse(localStorage.getItem('jsydiptv.fav') || '[]')); }catch(e){}
+function favSave(){
+  try{ localStorage.setItem('jsydiptv.fav', JSON.stringify(Array.from(FAV))); }catch(e){}
+}
+function favToggle(uuid){
+  if(FAV.has(uuid)) FAV.delete(uuid); else FAV.add(uuid);
+  favSave(); renderLists();
+  tip(FAV.has(uuid) ? '已收藏' : '已取消收藏');
+}
+
+/* ---------- 主题跟随 ---------- */
+(function theme(){
+  const apply = t => { if(t==='dark'||t==='light') document.documentElement.dataset.theme=t; };
+  (async()=>{
+    try{
+      const m = await import('/vendor/trim-app.js');
+      const sdk = new m.TrimApp();
+      if(!sdk.isStandaloneWeb){
+        const c = await sdk.getPlatformConfig(); apply(c.theme);
+        try{ sdk.$on('os/theme', t=>apply(t)); }catch(e){}
+        try{ sdk.setTitle('江苏移动 IPTV'); }catch(e){}
+      }
+    }catch(e){}
+  })();
+})();
+
+function tip(m,ms=2400){ const e=$('#tip'); e.textContent=m; e.classList.add('on');
+  clearTimeout(e._t); e._t=setTimeout(()=>e.classList.remove('on'),ms); }
+async function j(p,o){ const r=await fetch(p,o); try{return await r.json()}catch(e){return {error:'HTTP '+r.status}} }
+
+/* ---------- 台标渲染：按 tone 选底色 ---------- */
+function logoHtml(c, big){
+  const cls = big ? 'lg' : 'lg';
+  if(!c.logo) return '<div class="'+cls+' t-none">无</div>';
+  const tone = c.logo_tone === 'dark' ? 't-dark' : 't-light';
+  return '<div class="'+cls+' '+tone+'"><img src="'+esc(c.logo)+'" loading="lazy" alt=""></div>';
+}
+
+/* ---------- 状态 ---------- */
+async function status(){
+  const s = await j('/api/status'); ST = s || {};
+  const u=s.updating||{}, m=s.meta||{}, sc=s.schedule||{};
+  const dot=$('#dot'), st=$('#st');
+  if(u.running){ dot.className='dot warn'; st.innerHTML='<span class="spin"></span> 正在更新'; }
+  else if(m.status==='ok'){ dot.className='dot'; st.textContent='运行正常'; }
+  else if(m.status==='fail'||u.error){ dot.className='dot err'; st.textContent='上次更新失败'; }
+  else { dot.className='dot idle'; st.textContent='待更新'; }
+  $('#meta').textContent = m.channels ? (m.channels+' 频道 · 回看 '+(m.with_catchup||0)+' · '+(m.updated||'')) : '';
+
+  // 定时页
+  const on = sc.enabled !== false;
+  $('#swOn').checked = on;
+  $('#swTxt').textContent = on ? '已开启' : '已关闭';
+  $('#tm').disabled = !on;
+  if(sc.at && $('#tm').value !== sc.at) $('#tm').value = sc.at;
+  $('#schNext').textContent = on
+      ? (sc.next_run ? ('下次：'+sc.next_run) : '正在排程…')
+      : '定时更新已关闭，仅手动';
+  $('#stTime').textContent = m.updated || '—';
+  $('#stCh').innerHTML = (m.channels||'—')+'<span class="u">个</span>';
+  $('#stBack').innerHTML = (m.with_catchup||'—')+'<span class="u">个</span>';
+  $('#stUhd').innerHTML = (m.uhd != null ? m.uhd : '—')+'<span class="u">个</span>';
+  $('#stProg').textContent = m.programs ? m.programs.toLocaleString() : '—';
+  // 「立即更新」栏位左侧的上次更新时间
+  const lu = $('#lastUpd');
+  if(lu) lu.textContent = m.updated || '尚未更新';
+  if(m.uhd_h265 != null){
+    const e = $('#stUhd');
+    if(e) e.title = '其中 ' + m.uhd_h265 + ' 个是 H.265（部分播放器需支持 HEVC）';
+  }
+
+  // 软件介绍页：每个数字都来自实际生成结果或服务端实测，
+  // 不再出现「写死的 252」这类会跟真实数据脱节的描述。
+  const put = (k, v)=>{ const e = document.querySelector('#aboutFeat [data-k="'+k+'"]');
+                         if(e) e.textContent = v; };
+  const F = s.facets || {};
+  put('channels',  m.channels || '—');
+  put('channels2', m.channels || '—');
+  put('catchup',   m.with_catchup || '—');
+  put('keepdays',  m.backup_days != null ? m.backup_days : '—');
+  // EPG 文件里实际写入的条数（少于采集条数，因为只写前后几天区间）
+  put('epgprog',   m.epg_programs != null ? Number(m.epg_programs).toLocaleString() : '—');
+  put('g_uhd',     F.g_uhd  != null ? F.g_uhd  : '—');
+  put('g_cctv',    F.g_cctv != null ? F.g_cctv : '—');
+  put('g_tv',      F.g_tv   != null ? F.g_tv   : '—');
+  put('g_js',      F.g_js   != null ? F.g_js   : '—');
+  put('g_local',   F.g_local!= null ? F.g_local: '—');
+  put('g_other',   F.g_other!= null ? F.g_other: '—');
+  put('g_uhd_real',F.g_uhd_real!= null ? F.g_uhd_real:'—');
+  put('g_movie',   F.g_movie  != null ? F.g_movie  : '—');
+  put('g_kids',    F.g_kids   != null ? F.g_kids   : '—');
+  put('g_sport',   F.g_sport  != null ? F.g_sport  : '—');
+  put('g_life',    F.g_life   != null ? F.g_life   : '—');
+  put('g_radio',   F.g_radio  != null ? F.g_radio  : '—');
+  put('g_shop',    F.g_shop   != null ? F.g_shop   : '—');
+  put('logos',     F.logos  != null ? F.logos  : '—');
+  put('cdnnum',    F.cdn_candidates != null ? F.cdn_candidates : '—');
+  put('at',        sc.at || '—');
+  put('next',      sc.next_run || (sc.enabled === false ? '定时已关闭' : '正在排程'));
+  put('cdn',       (m.cdn ? String(m.cdn).replace(/^https?:\/\//, '') : '—'));
+  // 自检与隐私：直接读上次生成的 meta.json，没有就说明还没跑过
+  const ck = m.check || {};
+  const uh = document.querySelector('#pg-player [data-k="uhdcount"]');
+  if(uh) uh.textContent = (m.uhd != null ? m.uhd : '—');
+  put('samples',   ck.sample != null ? ck.sample : (ck.live ? String(ck.live).split('/')[1] : '—'));
+  put('privacy',   ck.privacy === 'clean' ? '无命中' : (ck.privacy ? ('命中 ' + ck.privacy) : '尚未自检'));
+}
+
+/* ---------- 频道加载 ---------- */
+async function loadChannels(){
+  const r = await j('/api/channels?group=&q=');
+  if(r.error){
+    $('#liveList').innerHTML='<div class="empty">'+esc(r.error)+'</div>';
+    return;
+  }
+  CH = r.channels||[];
+  GRPS = r.groups||{};
+  renderLists();
+}
+
+/* 顶部汇总文案：随搜索/收藏筛选实时变化，避免「列表 2 个但写着 278 个」。
+   list 为当前实际参与渲染的频道集合，sel 限定要更新的计数字段
+   工作台只有一个频道列表，计数统一写 #chSum。 */
+function updateSummary(list, sel){
+  const total = Object.values(GRPS).reduce((a,b)=>a+b,0);
+  let txt = '共 '+total+' 个频道 · '+Object.keys(GRPS).length+' 个分组';
+  if(list.length !== total){
+    txt = (FAV_ONLY ? '收藏' : '匹配')+' '+list.length+' 个 / 共 '+total+' 个';
+  }
+  const e=$(sel); if(e) e.textContent = txt;
+}
+
+function renderLists(){
+  // 单一频道工作台：只渲染右侧频道列表
+  renderGrouped($('#liveList'), Q.live, 'live');
+}
+
+/* 按分组渲染频道列表。每段 = 分组标题 + 频道网格（图标 + 名称 + 当前节目）。
+   点选频道即播放，并在左栏展示该频道节目单。
+
+   分组顺序：4K（置顶）→ 央视 → 卫视 → 江苏 → 地方-xx → 其它
+   「其它」内部再按运营商原版分组（体育/专业频道/影视/少儿/生活/广播/购物）细分，
+   因为这些台如果没有细分，100 多台挤在一段里没法看。 */
+/* 分组排序键。后端 /api/channels 已按 GROUP_ORDER 排好序返回，
+   这里只负责「分组之间的先后」与「组内顺序保持后端给定（4K CCTV 优先）」。 */
+const GRP_RANK = { '4K':0, '央视':1, '卫视':2, '江苏':3,
+                   '影视剧场':5, '少儿动画':6, '体育竞技':7,
+                   '生活纪录':8, '音乐广播':9, '购物':10, '其他':11 };
+function grpRank(g){
+  if(g in GRP_RANK) return GRP_RANK[g];
+  if(g.indexOf('地方')===0) return 4;
+  return 11;
+}
+
+/* 折叠状态记忆：跨 renderLists 保留（原先每次重建 DOM 就丢了） */
+const FOLDED = {};       // group -> true 表示已折叠
+
+function renderGrouped(box, kw, mode){
+  const q = (kw||'').trim().toLowerCase();
+  let list = CH.filter(c => !q || c.name.toLowerCase().includes(q) || String(c.num).includes(q));
+  if(FAV_ONLY) list = list.filter(c => FAV.has(c.uuid));
+  updateSummary(list, '#chSum');
+
+  // ★ 修复「点频道后列表刷新跳回顶部」：记住滚动位置与当前选中项，重建后原样恢复。
+  const prevTop = box.scrollTop;
+  const anchorUUID = (LIVE && LIVE.uuid) || null;
+
+  box.innerHTML = '';
+  if(!list.length){
+    box.innerHTML = '<div class="empty">'
+      + (FAV_ONLY ? '还没有收藏的频道，点频道右上角 ★ 收藏' : '没有匹配的频道')
+      + '</div>';
+    return;
+  }
+
+  const order = [];
+  let idx = {};
+  list.forEach(c=>{ if(idx[c.group]===undefined){ idx[c.group]=order.length; order.push(c.group); } });
+  order.sort((a,b)=> grpRank(a)-grpRank(b)
+    || (grpRank(a)===4 ? a.localeCompare(b,'zh') : 0)
+    || a.localeCompare(b,'zh'));
+
+  const frag = document.createDocumentFragment();
+  order.forEach(g=>{
+    // 保持后端返回的组内顺序（后端 gkey 已把 4K 组内 CCTV 排在前面并数字升序）
+    const cs = list.filter(c=>c.group===g);
+    if(!cs.length) return;
+
+    const sec = document.createElement('div');
+    sec.className = 'gsec' + (g==='4K' ? ' uhd' : '');
+    sec.dataset.group = g;
+    if(FOLDED[g]) sec.classList.add('folded');
+
+    const hd = document.createElement('div');
+    hd.className = 'gh';
+    hd.innerHTML = '<b>'+esc(g)+'</b><i></i><em>'+cs.length+' 个</em>'
+                 + '<button class="fold" title="折叠/展开">'+(FOLDED[g]?'展开':'折叠')+'</button>';
+    hd.querySelector('.fold').onclick = function(){
+      const folded = !sec.classList.contains('folded');
+      sec.classList.toggle('folded', folded);
+      FOLDED[g] = folded;
+      this.textContent = folded ? '展开' : '折叠';
+      updateAllToggleLabel();
+    };
+    sec.appendChild(hd);
+
+    const gd = document.createElement('div');
+    gd.className = 'grid';
+    cs.forEach(c=>{
+      const on = (LIVE && LIVE.uuid===c.uuid);
+      const d = document.createElement('div');
+      d.className = 'item' + (on?' on':'');
+      d.dataset.uuid = c.uuid;
+      // 4K 徽标：只有真 4K 才打「4K」；高清臻享但实测 1080P 的打「臻享」并标真实分辨率
+      let badge = '';
+      if(c.is_4k){
+        badge = '<span class="u4k" title="真 4K' + (c.w?(' '+c.w+'x'+c.h):'') + (c.codec?(' · '+c.codec):'') + '">4K</span>';
+      }else if(c.zhx){
+        badge = '<span class="u4k zhx" title="高清臻享' + (c.w?(' 实测 '+c.w+'x'+c.h):'') + (c.codec?(' · '+c.codec):'') + '">臻享</span>';
+      }
+      d.innerHTML = logoHtml(c)
+        + '<div class="nm"><b>'+esc(c.name)+'</b><span class="nowtxt" title="'
+        + (c.now ? esc(c.now.t) : '') + '">'
+        + (c.now ? esc(c.now.t) : '暂无节目单') + '</span></div>'
+        + badge
+        + '<span class="fav'+(FAV.has(c.uuid)?' on':'')+'" title="收藏/取消收藏">★</span>';
+      d.onclick = ()=>playChannel(c);
+      const star = d.querySelector('.fav');
+      star.onclick = ev=>{ ev.stopPropagation(); favToggle(c.uuid); };
+      gd.appendChild(d);
+    });
+    sec.appendChild(gd);
+    frag.appendChild(sec);
+  });
+  box.appendChild(frag);
+
+  // ★ 恢复滚动位置：优先把选中频道滚到可视区（不动就别动），否则还原原 scrollTop。
+  if(anchorUUID){
+    const sel = box.querySelector('.item.on');
+    if(sel && !q){
+      // 若选中项不在可视范围，则滚动到它；否则保持原位置，避免无谓跳动
+      const r = sel.getBoundingClientRect(), br = box.getBoundingClientRect();
+      if(r.top < br.top || r.bottom > br.bottom){
+        box.scrollTop += (r.top - br.top) - 8;
+      } else {
+        box.scrollTop = prevTop;
+      }
+    } else {
+      box.scrollTop = prevTop;
+    }
+  } else {
+    box.scrollTop = prevTop;
+  }
+  updateAllToggleLabel();
+}
+
+/* 一键展开/折叠：把所有分组统一展开或统一折叠 */
+function setAllFolded(folded){
+  $$('#liveList .gsec').forEach(sec=>{
+    sec.classList.toggle('folded', folded);
+    FOLDED[sec.dataset.group] = folded;
+    const b = sec.querySelector('.fold');
+    if(b) b.textContent = folded ? '展开' : '折叠';
+  });
+  updateAllToggleLabel();
+}
+function updateAllToggleLabel(){
+  const btn = $('#allToggle'); if(!btn) return;
+  const secs = $$('#liveList .gsec');
+  const anyOpen = secs.some(s=>!s.classList.contains('folded'));
+  btn.textContent = anyOpen ? '全部折叠' : '全部展开';
+}
+
+/* 只更新列表里的「当前节目」文字，不重建 DOM。
+   每 30 秒调一次，节目换档时列表自动跟上，滚动位置和折叠状态都不会被打断。
+   以前靠 channels.json 的静态 now 字段，所以一整天都停在凌晨那一档。 */
+function refreshNowText(){
+  $$('#liveList .item').forEach(el=>{
+    const c = CH.find(x=>x.uuid===el.dataset.uuid);
+    if(!c) return;
+    const sp = el.querySelector('.nowtxt');
+    if(!sp) return;
+    const t = c.now ? c.now.t : '暂无节目单';
+    if(sp.textContent !== t){ sp.textContent = t; sp.title = ct(c.now); }
+  });
+}
+function ct(n){ return n ? n.t : ''; }
+
+/* ---------- 直播播放 ---------- */
+/* Chromium 内核（飞牛桌面窗口）不原生支持 HLS，只有 Safari 支持。
+   因此这里两手准备：先试 video 原生（Safari / 已装解码器），
+   失败立刻切到 hls.js（MSE 分片），保证桌面窗口内能出画面。 */
+var HLS = null;          // 当前 hls.js 实例
+var HLS_READY = false;   // hls.min.js 是否加载成功
+var CODEC_OK = null;     // MSE 是否支持 H.264 + AAC
+var HEVC_OK = null;      // MSE 是否支持 H.265/HEVC（4K 频道的主要编码）
+
+/* ---- 解码能力探测（4K 黑屏的判定依据） ----
+   实测结论（2026-11-25）：
+     · 运营商 20 个 4K 台里 17 个是 H.265（HEVC Main / Main10），
+       只有 CCTV-164K、央视4K 等少数是 H.264。
+     · Chrome 131 的 MSE 报告 h264=false / h265=false（精简内核没编译专有解码）。
+     · 于是 hls.js 只成功 append 音频轨，视频轨被拒 → 有声音、画面全黑、无报错。
+   所以必须先探测，再决定「直接播」「先提醒」「自动降档」。 */
+function codecSupported(){
+  if(CODEC_OK !== null) return CODEC_OK;
+  try{
+    if(typeof MediaSource === 'undefined'){ CODEC_OK = false; return CODEC_OK; }
+    var v = MediaSource.isTypeSupported('video/mp4;codecs="avc1.4D401F,mp4a.40.2"')
+         || MediaSource.isTypeSupported('video/mp4;codecs="avc1.42E01E,mp4a.40.2"')
+         || MediaSource.isTypeSupported('video/mp4;codecs="avc1.640028,mp4a.40.2"')
+         || MediaSource.isTypeSupported('video/mp4;codecs="avc1.42E01E"')
+         || MediaSource.isTypeSupported('video/mp4;codecs="avc1.4D401E"');
+    CODEC_OK = !!v;
+  }catch(e){ CODEC_OK = false; }
+  return CODEC_OK;
+}
+
+function hevcSupported(){
+  if(HEVC_OK !== null) return HEVC_OK;
+  try{
+    if(typeof MediaSource === 'undefined'){ HEVC_OK = false; return HEVC_OK; }
+    HEVC_OK = ['hvc1.1.6.L120.90','hvc1.1.6.L153.B0','hvc1.2.4.L153.B0',
+               'hev1.1.6.L120.90','hvc1.5.1.L180.90'].some(function(t){
+      return MediaSource.isTypeSupported('video/mp4;codecs="'+t+'"');
+    });
+  }catch(e){ HEVC_OK = false; }
+  return HEVC_OK;
+}
+
+function _teardown(){
+  if(HLS){ try{ HLS.destroy(); }catch(e){} HLS=null; }
+  var v=$('#vid');
+  try{ v.pause(); v.removeAttribute('src'); v.load(); }catch(e){}
+}
+
+function _srcOf(c){ return '/stream?u=' + encodeURIComponent(c.live); }
+
+function _fail(msg, keepBar){
+  var v=$('#vid'), ph=$('#ph');
+  v.style.display='none'; ph.style.display='';
+  var pw=$('#pw'); if(pw) pw.classList.add('idle');
+  ph.innerHTML = msg;
+}
+
+/* 4K 降档按钮：把当前频道切到它的 1080P 档（运营商同频道一般都有）。
+   这是「4K 黑屏」最直接的解法——不是让用户自己去别的播放器里找。 */
+function _offerFallback(c, reason){
+  var alt = (c.alts || []).find(function(a){ return a.live && !/4K|UHD/i.test(a.name || a.live); })
+         || (c.alts || [])[0];
+  // 黑屏时把出口直接摆在提示里：降档 / 复制地址 / 外部打开，不用去下面那排按钮找
+  var acts = '<div class="phacts">';
+  if(alt) acts += '<button class="btn primary" id="btnDowngrade">切到低清晰度（'
+                + esc(alt.name || '1080P') + '）</button>';
+  acts += '<button class="btn" id="btnCopy2">复制地址</button>'
+        + '<button class="btn" id="btnOpen2">外部打开</button></div>';
+  _fail('<b style="color:#e6e9ee">' + esc(c.name) + ' 在此窗口只能出声音、画面是黑的</b>'
+    + '<br/><span style="font-size:12px">原因是当前浏览器内核缺少 '
+    + (c.codec && /265/.test(c.codec) ? 'H.265/HEVC' : 'H.264')
+    + ' 解码能力，直播源本身正常。'
+    + '<br/>电视端播放器（酷9 / 电视直播 / FongMi）一般都能硬解。</span>' + acts);
+  var b = $('#btnDowngrade');
+  if(b && alt){
+    b.onclick = function(){ playChannel(Object.assign({}, c, {live: alt.live, codec:'', is_4k:false})); };
+  }
+  var bc = $('#btnCopy2');
+  if(bc) bc.onclick = function(){ copyText(c.live); };
+  var bo = $('#btnOpen2');
+  if(bo) bo.onclick = function(){
+    window.open(location.origin + '/stream?u=' + encodeURIComponent(c.live), '_blank');
+  };
+}
+
+/* 用 hls.js 播（主路径） */
+function _playByHls(c, url){
+  var v=$('#vid');
+  HLS = new Hls({
+    enableWorker:true,
+    lowLatencyMode:false,
+    manifestLoadingTimeOut:12000,
+    manifestLoadingMaxRetry:2,
+    levelLoadingTimeOut:12000,
+    fragLoadingTimeOut:20000,
+    fragLoadingMaxRetry:3,
+    maxBufferLength:24,
+    maxMaxBufferLength:60
+  });
+  HLS.on(Hls.Events.ERROR, function(evt, data){
+    if(!data || !data.fatal) return;
+
+    // 编解码类错误：环境缺解码器（精简版 Chromium），不是流的问题。
+    // 4K/H.265 频道几乎必然走到这里，要给出可操作的降档出口。
+    if(data.type === Hls.ErrorTypes.MEDIA_ERROR &&
+       /codec|append|buffer/i.test(data.details || '')){
+      var isHevc = /265|hevc/i.test(c.codec || '') || c.is_4k;
+      _offerFallback(c, isHevc ? '这个 4K 频道用的是 H.265 编码，本窗口播不了'
+                              : '当前窗口缺少 H.264/AAC 解码能力');
+      _teardown(); return;
+    }
+
+    if(data.type === Hls.ErrorTypes.NETWORK_ERROR){
+      // 网络类错误先尝试恢复一次，避免偶发抖动直接放弃
+      if(data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR ||
+         data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT){
+        _fail('无法获取 '+esc(c.name)+' 的播放列表<br/><span style="font-size:12px">'
+              + '请确认本机在江苏移动宽带下，或稍后重试</span>');
+        _teardown(); return;
+      }
+      try{ HLS.startLoad(); return; }catch(e){}
+    }
+    if(data.type === Hls.ErrorTypes.MEDIA_ERROR){
+      try{ HLS.recoverMediaError(); return; }catch(e){}
+    }
+    _fail('播放中断：'+esc(data.details||'未知错误')
+          +'<br/><span style="font-size:12px">可重试或换下一个频道</span>');
+    _teardown();
+  });
+  HLS.on(Hls.Events.MANIFEST_PARSED, function(){
+    _tryPlay(v, c);
+  });
+  HLS.on(Hls.Events.FRAG_BUFFERED, function(){
+    _clearWatchdog();          // 已出帧，撤掉黑屏守护
+  });
+  HLS.loadSource(url);
+  HLS.attachMedia(v);
+  _startWatchdog(c);
+}
+
+/* ---------- 播放规格条 ----------
+   显示顺序按「用户最先想看」排列：分辨率 > 编码 > 帧率 > 声道 > 采样率 > 码率。
+   缺项不占位（例如 HEVC 的 VUI 有时取不到帧率，就干脆不显示这一项），
+   避免出现「— fps」这种没意义的占位。 */
+function _specItems(sp){
+  var out = [], v = (sp && sp.video) || {}, a = (sp && sp.audio) || {};
+  if(v.w && v.h){
+    out.push(['分辨率', v.w + '×' + v.h]);
+    // 常见档位标注，扫一眼就知道是 4K 还是 1080i
+    // 第三位是类型标记；必须作为一个元素 puch，否则 'tag' 会被当成
+    // 独立条目渲染（曾在页面上出现一个孤零零的 "ta"）
+    if(v.w >= 3840) out.push(['', '4K', 'tag']);
+    else if(v.w >= 1920) out.push(['', '1080P', 'tag']);
+    else if(v.w >= 1280) out.push(['', '720P', 'tag']);
+  }
+  if(v.codec){
+    var cd = v.codec + (v.profile ? ' ' + v.profile : '');
+    out.push(['视频编码', cd]);
+  }
+  if(v.fps) out.push(['帧率', v.fps + ' fps']);
+  if(a.ch){
+    out.push(['声道', a.ch === 1 ? '单声道' : a.ch === 2 ? '立体声'
+              : (a.ch === 6 ? '5.1' : a.ch + ' 声道')]);
+  }
+  if(a.sr) out.push(['采样率', (a.sr/1000).toFixed(a.sr % 1000 ? 1 : 0) + ' kHz']);
+  if(a.codec) out.push(['音频编码', a.codec]);
+  if(sp && sp.bitrate){
+    out.push(['码率', (sp.bitrate/1e6).toFixed(1) + ' Mbps']);
+  }
+  return out;
+}
+
+function renderSpec(sp, state, msg){
+  var bar = $('#specBar');
+  if(!bar) return;
+  if(state === 'off'){ bar.hidden = true; bar.innerHTML = ''; return; }
+  bar.hidden = false;
+  if(state === 'loading'){
+    bar.innerHTML = '<span class="sp-loading"><span class="spin"></span>正在读取流规格…</span>';
+    return;
+  }
+  if(state === 'fail'){
+    bar.innerHTML = '<span class="sp-loading">规格读取失败'
+      + (msg ? '：' + esc(msg) : '') + '</span>';
+    return;
+  }
+  var items = _specItems(sp);
+  if(!items.length){
+    bar.innerHTML = '<span class="sp-loading">该流未提供可识别的规格信息</span>';
+    return;
+  }
+  var html = [];
+  for(var i = 0; i < items.length; i++){
+    var it = items[i];
+    if(it[2] === 'tag'){ html.push('<span class="sp-tag">' + esc(it[1]) + '</span>'); continue; }
+    if(html.length) html.push('<span class="sp-sep">·</span>');
+    html.push('<span class="sp-item">'
+      + (it[0] ? '<span class="k">' + esc(it[0]) + '</span>' : '')
+      + '<span class="v">' + esc(it[1]) + '</span></span>');
+  }
+  bar.innerHTML = html.join('');
+}
+
+var SPEC_SEQ = 0;
+function loadSpec(c){
+  var seq = ++SPEC_SEQ;          // 快速切台时，旧请求回来不准覆盖新台
+  renderSpec(null, 'loading');
+  var url = '/api/spec?u=' + encodeURIComponent(c.live);
+  fetch(url).then(function(r){ return r.json(); }).then(function(r){
+    if(seq !== SPEC_SEQ) return;
+    if(r && r.ok && r.spec) renderSpec(r.spec, 'ok');
+    else renderSpec(null, 'fail', (r && r.msg) || '');
+  }).catch(function(){
+    if(seq !== SPEC_SEQ) return;
+    renderSpec(null, 'fail', '请求失败');
+  });
+}
+
+/* 起播守护：video 一旦长时间无画面且未报错，不能让它停在纯黑底上什么都不说。
+   这正是「直播黑屏」的成因——play() 被浏览器策略拒绝或解码器缺席时，
+   video 显示黑底、没有任何提示，用户只看到一片黑。 */
+var WATCHDOG = null;
+function _clearWatchdog(){ if(WATCHDOG){ clearTimeout(WATCHDOG); WATCHDOG=null; } }
+
+function _startWatchdog(c){
+  _clearWatchdog();
+  WATCHDOG = setTimeout(function(){
+    var v=$('#vid');
+    // 已经有画面或已在出帧，不用管
+    if(v.readyState >= 3 && v.videoWidth > 0) return;
+    if(v.videoWidth === 0){
+      _fail('已连上流但迟迟没有画面<br/>'
+        + '<span style="font-size:12px">可能是当前窗口内核对 H.264 解码支持不全。'
+        + '可点下方「复制播放地址」用电视/手机播放器打开</span>');
+    }
+  }, 12000);
+}
+
+/* 起播：优先**有声**播放（点频道本身就是用户手势，通常允许）。
+   被自动播放策略拒绝时，退一步静音重试，保证至少能出画面，
+   并在界面上提示用户点一下音量图标即可恢复声音。
+   关键：绝不静默吞掉 play() 的失败——那正是「纯黑屏、什么都不说」的来源。 */
+function _tryPlay(v, c){
+  v.muted = false;
+  var p = v.play();
+  if(!p || !p.catch) return;
+  p.catch(function(err){
+    if(err && (err.name === 'NotAllowedError' || err.name === 'AbortError')){
+      v.muted = true;
+      var p2 = v.play();
+      if(p2 && p2.catch){
+        p2.catch(function(){
+          _fail('浏览器阻止了自动播放<br/>'
+            + '<span style="font-size:12px">请点一下播放器上的播放按钮；'
+            + '或用「复制地址」在电视/手机播放器里打开</span>');
+        });
+      }
+      tip('已静音播放，点播放器音量图标可开声音');
+    }
+  });
+}
+
+function playChannel(c){
+  LIVE = c;
+  var v=$('#vid'), ph=$('#ph');
+  _teardown();
+  ph.style.display='none'; v.style.display='block';
+  $('#pw').classList.remove('idle');
+  updateNowBar(c);
+  renderLists();
+  tip('正在播放 '+c.name);
+  loadEpgInto($('#liveEpg'), c);   // 选中即展示该频道节目单
+
+  // ---- 4K/H.265 预判：先判断本窗口有没有 HEVC 解码能力，再决定怎么播。
+  // 没有就直接给降档入口，而不是让 hls.js 拉半天流、最后只出声音黑屏。
+  // 注意只对「确认是 H.265」的流这样做；codec 未知（还没探测）时照常尝试。
+  if(c.codec && /265|hevc/i.test(c.codec) && !hevcSupported()){
+    loadSpec(c);
+    _offerFallback(c, '这个 4K 频道是 H.265 编码，当前窗口内核不支持');
+    return;
+  }
+
+  loadSpec(c);                    // 并行读取规格，不阻塞起播
+  var url = _srcOf(c);
+
+  // 1) 原生 HLS（Safari / iOS / 部分桌面）
+  if(v.canPlayType('application/vnd.apple.mpegurl')){
+    v.src = url;
+    _tryPlay(v, c);
+    _startWatchdog(c);
+    v.onerror = function(){
+      // 原生失败 → 掉到 hls.js
+      v.onerror = null;
+      if(HLS_READY){ _playByHls(c, url); }
+      else _fail('无法播放 '+esc(c.name)
+        +'<br/><span style="font-size:12px">请确认本机在江苏移动宽带下，或稍后重试</span>');
+    };
+    return;
+  }
+
+  // 2) hls.js（MSE）
+  if(HLS_READY){ _playByHls(c, url); return; }
+
+  // 3) 兜底：直接把 m3u8 交给 video（多数 Chromium 会失败，给出提示）
+  v.src = url;
+  _tryPlay(v, c);
+  _startWatchdog(c);
+  v.onerror = function(){
+    v.onerror = null;
+    _fail('当前环境不支持直接播放 HLS'
+      + '<br/><span style="font-size:12px">可点击「复制播放地址」用 TV 端播放器打开</span>');
+  };
+}
+
+function stopPlay(){
+  _clearWatchdog();
+  _teardown();
+  var v=$('#vid');
+  v.style.display='none'; $('#ph').style.display='';
+  var pw=$('#pw'); if(pw) pw.classList.add('idle');
+  $('#ph').textContent='已停止，从右侧选择频道继续播放';
+  LIVE=null; $('#liveNow').textContent='未选择频道'; renderLists();
+  const ep=$('#liveEpg'); if(ep){ ep.classList.add('is-empty'); EPG_SEL={}; }
+  SPEC_SEQ++; renderSpec(null, 'off');
+}
+
+/* 动态加载 hls.js（放在本地 www 目录，无需外网 CDN） */
+(function(){
+  var s=document.createElement('script');
+  s.src='hls.min.js';
+  s.onload=function(){ HLS_READY = !!(window.Hls && window.Hls.isSupported && window.Hls.isSupported()); };
+  s.onerror=function(){ HLS_READY=false; };
+  document.head.appendChild(s);
+})();
+
+/* 回看播放：向服务端换取该时段的回看地址，再走同一套播放逻辑 */
+async function playCatchup(c, p){
+  const r = await j('/api/catchup?uuid=' + encodeURIComponent(c.uuid)
+                  + '&start=' + p.start + '&end=' + p.end);
+  if(r.error || !r.ok){
+    tip(r.msg || '回看不可用');
+    return;
+  }
+  // 复用直播播放管线：把回看地址当作临时源
+  const fake = Object.assign({}, c, { live: r.url });
+  switchPage('live');
+  playChannel(fake);
+  $('#liveNow').innerHTML = '<b>' + esc(c.name) + '</b> · 回看 '
+      + hm(p.start) + '–' + hm(p.end) + ' · ' + esc(p.title);
+  tip('回看：' + p.title);
+}
+
+function step(d){
+  const lq=Q.live.trim().toLowerCase();
+  let lc = CH.filter(c=>!lq || c.name.toLowerCase().includes(lq));
+  if(!lc.length) return;
+  let i = LIVE ? lc.findIndex(c=>c.uuid===LIVE.uuid) : -1;
+  i = (i + d + lc.length) % lc.length;
+  playChannel(lc[i]);
+}
+
+/* ---------- EPG 渲染（直播页） ---------- */
+/* 结构：固定头部（台标 + 频道名 + 日期切换） + 独立滚动的节目列表。
+   修两个老问题：
+     ① 节目单只显示 1 条 —— 以前按「当前前后 9 档」切片，一个频道一天几十档
+        被截成一小截，且跨天信息全丢。现在改为「按天完整展示」，
+        回看区间（默认 7 天）每天都能点进去看完整节目表。
+     ② 叠放 —— 头部用 sticky + 不透明背景，列表自己滚，台标区不会被盖住。 */
+let EPG_CACHE = {};           // uuid -> 完整节目数组
+let EPG_SEL = {};             // uuid -> 当前选中的日期 yyyy-mm-dd
+
+const d8 = ts => { const d=new Date(ts*1000); return d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate()); };
+/* 日期按钮文案：只给「今天/昨天/明天」三个相对词，其余一律用 M-D。
+   以前 11-18…11-23 + 昨天 + 今天 + 明天 混排，长度不一看着散乱。
+   统一后：全是 M-D，仅今天/昨天/明天替换，宽度接近，一眼能扫。 */
+const dlabel = k => {
+  const now = Date.now()/1000;
+  const today = d8(now);
+  if(k===today) return '今天';
+  if(k===d8(now - 86400)) return '昨天';
+  if(k===d8(now + 86400)) return '明天';
+  return k.slice(5);
+};
+
+async function loadEpgInto(box, c){
+  box.dataset.uuid = c.uuid;
+  box.classList.add('is-empty');
+  box.innerHTML = '<div class="empty" style="padding:18px"><span class="spin"></span> 加载节目单…</div>';
+  let programs = EPG_CACHE[c.uuid];
+  if(!programs){
+    const r = await j('/api/epg?uuid=' + encodeURIComponent(c.uuid));
+    if(box.dataset.uuid !== c.uuid) return;
+    if(r.error || !r.programs){
+      box.classList.add('is-empty');
+      box.innerHTML = '<div class="empty" style="padding:18px">该频道暂无节目单</div>';
+      return;
+    }
+    programs = EPG_CACHE[c.uuid] = r.programs;
+  }
+  if(!programs.length){
+    box.classList.add('is-empty');
+    box.innerHTML = '<div class="empty" style="padding:18px">该频道暂无节目单</div>';
+    return;
+  }
+  if(!EPG_SEL[c.uuid]) EPG_SEL[c.uuid] = d8(Date.now()/1000);
+  box.classList.remove('is-empty');     // 有数据了才允许它撑满剩余空间
+  renderEpgPanel(box, c, programs);
+}
+
+function renderEpgPanel(box, c, programs){
+  const now = Date.now()/1000;
+  // 按天分桶
+  const byDay = {};
+  programs.forEach(p=>{
+    const k = d8(p.start);
+    (byDay[k] = byDay[k] || []).push(p);
+  });
+  const days = Object.keys(byDay).sort();
+  // 回看可及范围：节目已结束且在 backup_days 内
+  const keepDays = (ST.meta && ST.meta.backup_days) || 7;
+  const rvOk = p => c.back>0 && p.end<=now && (now-p.start) < keepDays*86400;
+
+  let sel = EPG_SEL[c.uuid];
+  if(!byDay[sel]){
+    // 选中的那天没有节目，退回最近有节目的那天（优先今天）
+    const today = d8(now);
+    sel = byDay[today] ? today : (days.filter(d=>byDay[d].some(p=>p.end>now))[0] || days[days.length-1]);
+    EPG_SEL[c.uuid] = sel;
+  }
+
+  const head = document.createElement('div');
+  head.className = 'epghead';
+  const dayBtns = days.map(k=>{
+    const on = k===sel;
+    const rv = byDay[k].some(rvOk);
+    return '<button class="dbtn'+(on?' on':'')+'" data-day="'+k+'" title="'
+      + (rv?'该日节目可回看':'') + '">' + dlabel(k)
+      + (rv?'<i class="rvd"></i>':'') + '</button>';
+  }).join('');
+  head.innerHTML = '<div class="top">' + logoHtml(c, true)
+    + '<div class="tt"><b>' + esc(c.name) + '</b>'
+    + '<span class="mt">台号 ' + esc(c.num) + ' · ' + esc(c.group)
+    + (c.codec ? ' · ' + esc(c.codec) : '')
+    + (c.is_4k && c.res_name ? ' · ' + esc(c.res_name) : '')
+    + (c.back>0 ? ' · 可回看 '+keepDays+' 天' : ' · 不支持回看') + '</span></div>'
+    + '</div><div class="days">' + dayBtns + '</div>';
+
+  const list = document.createElement('div');
+  list.className = 'plist';
+  const rows = byDay[sel] || [];
+  if(!rows.length){
+    list.innerHTML = '<div class="pempty">该日暂无节目单</div>';
+  } else {
+    rows.forEach(p=>{
+      const d = document.createElement('div');
+      const isNow = (p.start<=now && now<p.end);
+      const isPast = p.end < now;
+      const canRv = rvOk(p);
+      d.className = 'p' + (isNow?' now':'') + (isPast?' past':'') + (canRv?' clickable':'');
+      if(canRv){
+        d.title = '点击回看：' + p.title;
+        d.onclick = ()=>playCatchup(c, p);
+      }
+      d.innerHTML = '<span class="a">' + hm(p.start) + '–' + hm(p.end) + '</span>'
+                  + '<span class="b" title="' + esc(p.title) + '">' + esc(p.title) + '</span>'
+                  + (canRv ? '<span class="rv">回看</span>' : '');
+      list.appendChild(d);
+    });
+  }
+
+  box.innerHTML = '';
+  box.appendChild(head);
+  box.appendChild(list);
+
+  head.querySelectorAll('.dbtn').forEach(b=>{
+    b.onclick = ()=>{ EPG_SEL[c.uuid] = b.dataset.day; renderEpgPanel(box, c, programs); };
+  });
+  // 日期条横向滚动：把选中的那天滚进视野（日期多了靠右时不然看不见选中态）
+  const selBtn = head.querySelector('.dbtn.on');
+  if(selBtn){
+    const days = head.querySelector('.days');
+    const off = selBtn.offsetLeft - days.offsetLeft;
+    if(off < days.scrollLeft || off + selBtn.offsetWidth > days.scrollLeft + days.clientWidth){
+      days.scrollLeft = Math.max(0, off - days.clientWidth / 2 + selBtn.offsetWidth / 2);
+    }
+  }
+
+  // 选中「今天」时把正在播出的那档滚到可视区顶部（只滚 .plist 自身）
+  if(sel===d8(now)){
+    const cur = list.querySelector('.p.now');
+    if(cur){
+      const off = cur.offsetTop - list.offsetTop;
+      list.scrollTop = Math.max(0, off - 4);
+    }
+  } else {
+    list.scrollTop = 0;
+  }
+}
+
+/* ---------- 复制 ---------- */
+async function copyText(t){
+  try{
+    if(navigator.clipboard && window.isSecureContext){ await navigator.clipboard.writeText(t); }
+    else {
+      const i=document.createElement('textarea'); i.value=t;
+      i.style.position='fixed'; i.style.opacity='0'; document.body.appendChild(i);
+      i.select(); document.execCommand('copy'); i.remove();
+    }
+    tip('已复制');
+  }catch(e){ tip('复制失败，请手动选择'); }
+}
+document.addEventListener('click', e=>{
+  const b=e.target.closest('button[data-c]');
+  if(b){ const el=document.getElementById(b.dataset.c); if(el) copyText(el.value); return; }
+  const b2=e.target.closest('button[data-c2]');
+  if(b2){ copyText(b2.dataset.c2); }
+});
+
+/* ---------- 页面切换 ---------- */
+function switchPage(p){
+  PAGE=p;
+  $$('.nav').forEach(b=>b.classList.toggle('on', b.dataset.p===p));
+  ['live','sched','player','about'].forEach(k=>{
+    const el = $('#pg-'+k); if(el) el.hidden = (k!==p);
+  });
+  if(p==='sched'){ status(); loadLogs(); }
+}
+$$('.nav').forEach(b=> b.onclick = ()=>switchPage(b.dataset.p));
+
+/* ---------- 更新任务 ---------- */
+async function doUpdate(btn){
+  const b=$(btn); const old=b.textContent;
+  b.disabled=true; b.textContent='更新中…';
+  const hint=$('#updHint'); if(hint){ hint.textContent='正在拉取，约 1–3 分钟'; }
+  try{
+    const r = await j('/api/update',{method:'POST'});
+    if(r.ok){ tip('更新完成：'+(r.meta? r.meta.channels+' 个频道':'成功')); }
+    else { tip('更新失败：'+(r.msg||'未知原因'),4000); }
+  }catch(e){ tip('更新请求失败',4000); }
+  b.disabled=false; b.textContent=old;
+  if(hint){ hint.textContent=''; }
+  await status(); await loadChannels(); loadLogs();
+}
+
+/* ---------- 定时设置 ---------- */
+$('#swOn').onchange = ()=>{
+  const on=$('#swOn').checked;
+  $('#swTxt').textContent = on?'已开启':'已关闭';
+  $('#tm').disabled = !on;
+};
+$('#btnSaveSch').onclick = async ()=>{
+  const on = $('#swOn').checked;
+  const at = $('#tm').value || '03:30';
+  const r = await j('/api/schedule',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({enabled:on, at:at})});
+  if(r.ok){
+    tip(on ? ('已开启，每天 '+at+' 更新') : '已关闭定时更新');
+    status();
+  } else tip(r.msg||'保存失败',3200);
+};
+
+/* ---------- 日志 ---------- */
+async function loadLogs(){
+  const r = await j('/api/log?lines=100');
+  const p=$('#logs');
+  if(r.log){ p.textContent = r.log.trim() || '暂无日志'; p.scrollTop = p.scrollHeight; }
+  else p.textContent='暂无日志';
+}
+
+/* ---------- 播放器接入地址 ---------- */
+function fillUrls(){
+  const base = ST.base_url || (location.protocol+'//'+location.host);
+  const set=(id,path)=>{ const el=document.getElementById(id); if(el) el.value = base+path; };
+  set('u_fongmi','/fongmi.json');
+  set('u_fongmi_m3u','/fongmi.m3u');
+  // 酷9 / 电视直播：回看占位符与 FongMi 一致，共用 fongmi.m3u；EPG 用标准 XMLTV
+  set('u_ku9','/fongmi.m3u');
+  set('u_epg_ku9','/epg.xml');
+  set('u_tvbox','/tvbox.json');
+  set('u_diyp','/iptv.m3u8');
+  set('u_epg3','/epg.xml');
+  set('u_kodi','/kodi.m3u');
+  set('u_epg2','/epg.xml');
+  set('u_tg','/iptv.m3u8');
+}
+$$('#pTabs .tab').forEach(t=> t.onclick = ()=>{
+  $$('#pTabs .tab').forEach(x=>x.classList.toggle('on',x===t));
+  ['fongmi','ku9','tvbox','diyp','kodi','tg'].forEach(k=>{ $('#p'+k).hidden = (k!==t.dataset.t); });
+});
+
+/* ---------- 事件绑定 ---------- */
+$('#btnUpd2').onclick = ()=>doUpdate('#btnUpd2');
+$('#btnPrev').onclick = ()=>step(-1);
+$('#btnNext').onclick = ()=>step(1);
+$('#btnStop').onclick = stopPlay;
+$('#btnCopyLive').onclick = ()=>{ if(LIVE) copyText(LIVE.live); else tip('请先选择频道'); };
+/* 外部打开：浏览器若能播就在新标签播（走同一代理），
+   不能播时用户可拿到地址填进电视端播放器 */
+$('#btnOpenLive').onclick = ()=>{
+  if(!LIVE){ tip('请先选择频道'); return; }
+  var u = location.origin + '/stream?u=' + encodeURIComponent(LIVE.live);
+  window.open(u, '_blank');
+};
+let t1,t2;
+$('#liveQ').oninput = e=>{ Q.live=e.target.value; clearTimeout(t1); t1=setTimeout(renderLists,220); };
+
+
+/* 收藏筛选开关（两个页面联动同一状态） */
+function bindFavBtn(sel){
+  const b=$(sel);
+  if(!b) return;
+  b.onclick=()=>{
+    FAV_ONLY=!FAV_ONLY;
+    ['#favOnly'].forEach(s=>{
+      const e=$(s); if(e) e.classList.toggle('on', FAV_ONLY);
+    });
+    renderLists();
+    tip(FAV_ONLY?'只看收藏':'显示全部频道');
+  };
+}
+bindFavBtn('#favOnly');
+
+/* 一键展开/折叠所有分组 */
+(function(){
+  const b = $('#allToggle');
+  if(!b) return;
+  b.onclick = ()=>{
+    const secs = $$('#liveList .gsec');
+    const anyOpen = secs.some(s=>!s.classList.contains('folded'));
+    setAllFolded(anyOpen);        // 有展开的就全部折叠；全折叠了就全部展开
+    tip(anyOpen ? '已折叠全部分组' : '已展开全部分组');
+  };
+})();
+
+/* ---------- 启动 ---------- */
+(async()=>{
+  await status();
+  await loadChannels();
+  if(!LIVE) $('#ph').textContent = '从右侧选择频道开始播放';
+  fillUrls();
+  setInterval(status, 15000);
+  scheduleNowRefresh();
+})();
+
+/* 「当前节目」自动跟档
+   以前用固定 30 秒轮询：节目换档后最多要等 30 秒，页面上的节目名才会变，
+   用户看到的就是「右侧列表 EPG 不实时」；而在换档那一瞬间还会出现
+   页面文字与接口不一致的短暂窗口。
+   现在改成自适应定时：算出「最近一个正在播的节目的结束时刻」，
+   到点后 2 秒再刷新，换档几乎零延迟；平时不空转打接口。 */
+let NOW_TIMER = null;
+function scheduleNowRefresh(){
+  if(NOW_TIMER) clearTimeout(NOW_TIMER);
+  const now = Date.now()/1000;
+  // 找出所有频道里最早的「即将结束」时刻
+  let next = Infinity;
+  CH.forEach(c=>{
+    if(c.now && c.now.e > now && c.now.e < next) next = c.now.e;
+  });
+  let wait = (next===Infinity) ? 60000 : Math.max(5, (next - now) + 2) * 1000;
+  if(wait > 180000) wait = 180000;   // 兜底，最长 3 分钟刷一次
+  NOW_TIMER = setTimeout(async ()=>{
+    await pullNow();
+    scheduleNowRefresh();
+  }, wait);
+}
+
+async function pullNow(){
+  const r = await j('/api/channels?group=&q=');
+  if(r && r.channels){
+    CH = r.channels; GRPS = r.groups||{};
+    refreshNowText();
+    if(LIVE){                       // 正在播放的频道，同步更新标题里的节目名
+      const c = CH.find(x=>x.uuid===LIVE.uuid);
+      if(c){ LIVE = c; updateNowBar(c); }
+    }
+  }
+}
+
+function updateNowBar(c){
+  const el = $('#liveNow');
+  if(!el) return;
+  el.innerHTML = '<b>'+esc(c.name)+'</b>'
+    + (c.is_4k ? ' <span class="u4k" style="position:static;vertical-align:2px">4K</span>' : '')
+    + (c.now ? (' · <b>'+esc(c.now.t)+'</b>（'+hm(c.now.s)+'–'+hm(c.now.e)+'）') : '');
+}
+</script>
+</body>
+</html>

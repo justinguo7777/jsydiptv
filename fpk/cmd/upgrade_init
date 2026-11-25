@@ -1,0 +1,7 @@
+#!/bin/bash
+# 升级前：停服务，保留数据与配置
+set -u
+D="$(dirname "$(readlink -f "$0")")"
+echo "$(date '+%F %T') upgrade_init" >> "${TRIM_PKGVAR:-/tmp}/install.log" 2>/dev/null
+[ -x "$D/main" ] && sh "$D/main" stop >> "${TRIM_PKGVAR:-/tmp}/install.log" 2>&1 || true
+exit 0

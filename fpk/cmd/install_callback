@@ -1,0 +1,23 @@
+#!/bin/bash
+# 安装完成：生成初始配置
+# 注意：真实安装后 cmd/ 与 app 内容不在同一目录，
+#       TRIM_APPDEST 指向 app.tgz 解压后的根（server/ www/ ui/ 在此下）
+set -u
+LOG="${TRIM_PKGVAR:-/tmp}/install.log"
+mkdir -p "${TRIM_PKGVAR:-/tmp}" "${TRIM_PKGETC:-/tmp}" 2>/dev/null
+echo "$(date '+%F %T') install_callback" >> "$LOG"
+
+SELF_DIR="$(dirname "$(readlink -f "$0")")"
+
+# 首次安装用安装向导的值生成配置；已存在则保留（覆盖升级场景）
+if [ ! -f "${TRIM_PKGETC}/config.json" ]; then
+    if [ -x "${SELF_DIR}/config_callback" ]; then
+        sh "${SELF_DIR}/config_callback" >> "$LOG" 2>&1 || {
+            echo "初始化配置失败，请检查端口与时间设置。" > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
+            exit 1
+        }
+    fi
+fi
+
+echo "$(date '+%F %T') install_callback done" >> "$LOG"
+exit 0

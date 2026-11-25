@@ -1,0 +1,12 @@
+#!/bin/bash
+# 升级后：清理构建残留并启动服务
+set -u
+D="$(dirname "$(readlink -f "$0")")"
+L="${TRIM_PKGVAR:-/tmp}/install.log"
+echo "$(date '+%F %T') upgrade_callback" >> "$L" 2>/dev/null
+rm -rf "${TRIM_PKGVAR}/data/.build" 2>/dev/null
+if [ -x "$D/main" ]; then
+    sh "$D/main" start >> "$L" 2>&1 || \
+        echo "升级后启动服务失败，请查看应用日志。" > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
+fi
+exit 0

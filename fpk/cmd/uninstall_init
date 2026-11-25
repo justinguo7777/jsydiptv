@@ -1,0 +1,9 @@
+#!/bin/bash
+# 卸载前：停止服务
+set -u
+D="$(dirname "$(readlink -f "$0")")"
+L="${TRIM_PKGVAR:-/tmp}/install.log"
+echo "$(date '+%F %T') uninstall_init" >> "$L" 2>/dev/null
+[ -x "$D/main" ] && sh "$D/main" stop >> "$L" 2>&1 || true
+pkill -f "jsydiptv/server/server.py" 2>/dev/null || true
+exit 0

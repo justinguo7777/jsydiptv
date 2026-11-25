@@ -1,0 +1,105 @@
+#!/bin/bash
+# 配置变更后执行：把飞牛原生表单提交的值写成 config.json
+# 环境变量来源：wizard/config（或 wizard/install）中的 field + 系统注入的 TRIM_* 变量
+set -u
+
+CONF="${TRIM_PKGETC}/config.json"
+mkdir -p "${TRIM_PKGETC}" 2>/dev/null
+LOG="${TRIM_PKGVAR:-/tmp}/service.log"
+log(){ echo "$(date '+%Y-%m-%d %H:%M:%S') [config] $*" >> "$LOG"; }
+
+PY="$(command -v python3 2>/dev/null)"
+if [ -z "$PY" ]; then
+    echo "系统未找到 python3，无法写入配置。请先安装 Python3。" > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
+    exit 1
+fi
+
+# 校验并归一化后写盘（全部在 python 里做，避免 shell 引号问题）
+"$PY" - "$CONF" <<'PYEOF'
+import json, os, re, sys
+
+conf = sys.argv[1]
+
+def env(k, default=""):
+    return (os.environ.get(k) or "").strip() or default
+
+def to_int(k, default, lo, hi):
+    v = env(k, "")
+    if v == "":
+        return default
+    if not re.match(r"^\d+$", v):
+        sys.stderr.write("%s 必须是非负整数\n" % k)
+        raise SystemExit(1)
+    n = int(v)
+    if not (lo <= n <= hi):
+        sys.stderr.write("%s 超出允许范围 %d-%d\n" % (k, lo, hi))
+        raise SystemExit(1)
+    return n
+
+def to_bool(k, default):
+    v = env(k, "")
+    if v == "":
+        return default
+    return v.lower() in ("1", "true", "yes", "on", "checked")
+
+# 已有配置作为兜底（升级/部分字段变更时不丢配置）
+cur = {}
+try:
+    with open(conf, encoding="utf-8") as f:
+        cur = json.load(f)
+except Exception:
+    pass
+
+port = to_int("wizard_port", int(cur.get("port", 18123)), 1024, 65535)
+at = env("wizard_update_at", cur.get("update_at", "03:30"))
+if not re.match(r"^([01]?\d|2[0-3]):[0-5]\d$", at):
+    sys.stderr.write("更新时间格式应为 HH:MM\n")
+    raise SystemExit(1)
+# 归一成两位
+h, m = at.split(":")
+at = "%02d:%s" % (int(h), m)
+
+district = env("wizard_district", cur.get("district", "all"))
+mode = env("wizard_output_mode", cur.get("output_mode", "minimal"))
+if mode not in ("minimal", "full"):
+    mode = "minimal"
+
+cfg = {
+    "port": port,
+    "update_at": at,
+    "district": district,
+    "epg_enable": to_bool("wizard_epg_enable", bool(cur.get("epg_enable", True))),
+    "days": to_int("wizard_days", int(cur.get("days", 3)), 0, 30),
+    "history_days": to_int("wizard_history_days", int(cur.get("history_days", 7)), 0, 30),
+    "backup_days": to_int("wizard_backup_days", int(cur.get("backup_days", 7)), 0, 30),
+    "localize_logo": to_bool("wizard_localize_logo", bool(cur.get("localize_logo", True))),
+    "output_mode": mode,
+    "schedule_enabled": to_bool("wizard_schedule_enabled", bool(cur.get("schedule_enabled", True))),
+}
+
+os.makedirs(os.path.dirname(conf), exist_ok=True)
+tmp = conf + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(cfg, f, ensure_ascii=False, indent=2)
+os.replace(tmp, conf)
+print("配置已写入: " + json.dumps(cfg, ensure_ascii=False))
+PYEOF
+
+rc=$?
+if [ "$rc" -ne 0 ]; then
+    echo "配置校验失败，请检查表单中的端口/时间/天数填写。" > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
+    exit 1
+fi
+
+log "配置已更新"
+# 用真实 PID 文件判断服务是否在运行，然后重启以应用新配置
+MAIN="$(dirname "$(readlink -f "$0")")/main"
+PID="$(head -n1 "${TRIM_PKGVAR}/app.pid" 2>/dev/null | tr -dc '0-9')"
+if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+    log "服务在运行(PID=$PID)，重启以应用新配置"
+    [ -x "$MAIN" ] && sh "$MAIN" stop >/dev/null 2>&1
+    sleep 1
+    [ -x "$MAIN" ] && sh "$MAIN" start >/dev/null 2>&1
+fi
+
+exit 0
