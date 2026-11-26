@@ -6,7 +6,7 @@
 
 把江苏移动电视直播变成你自己的、能长期用的 IPTV 服务
 
-[![Release](https://img.shields.io/github/v/release/justinguo7777/jsydiptv?color=blue&style=flat-square)](https://github.com/justinguo7777/jsydiptv/releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-fnOS%20%7C%20Linux-lightgrey?style=flat-square)]() [![Python](https://img.shields.io/badge/python-3.8%2B-blue?style=flat-square)]() [![Deps](https://img.shields.io/badge/dependencies-zero-brightgreen?style=flat-square)]()
+[![Release](https://img.shields.io/github/v/release/justinguo7777/jsydiptv?color=blue&style=flat-square)](https://github.com/justinguo7777/jsydiptv/releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-fnOS%20%7C%20Linux-lightgrey?style=flat-square)](https://www.fnnas.com/) [![Python](https://img.shields.io/badge/python-3.8%2B-blue?style=flat-square)](https://www.python.org/) [![Deps](https://img.shields.io/badge/dependencies-zero-brightgreen?style=flat-square)](#-核心特性)
 
 **277 个频道 · 251 个可回看 · 7 天节目单 · 4K 实测标注 · 每天自动更新**
 
