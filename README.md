@@ -280,7 +280,7 @@ python3 verify/round1_api.py          # 接口/产物/数据/安全 34 项
 
 <img src="docs/wechat-group.png" width="260" alt="jsydiptv 问题反馈群二维码">
 
-<sub>群二维码 7 天内有效，过期请提 <a href="https://github.com/justinguo7777/jsydiptv/issues">Issue</a> 提醒更新</sub>
+<sub>二维码由微信生成，会定期更新；若已失效，欢迎<a href="https://github.com/justinguo7777/jsydiptv/issues">提 Issue</a> 提醒我换新的</sub>
 
 </div>
 
