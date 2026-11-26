@@ -30,3 +30,10 @@ docs/fnos-ref/
 # 上游快照（调研中间产物，不入库）
 上游原版分组*.json
 上游原版分组*.txt
+
+# 构建时生成
+/build.json
+/fpk/app/www/VERSION
+
+# 本地开发/发布脚本（沉淀在 ~/cow/skills，不进公开仓库）
+/tools/

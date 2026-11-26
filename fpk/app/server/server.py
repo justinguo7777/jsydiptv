@@ -120,9 +120,14 @@ UHD_CODE_RE = re.compile(r"(?:4K|UHD|2160)(?![0-9])", re.I)
 UHD_NAME_RE = re.compile(r"4K|UHD|超高清", re.I)
 ZHENXIANG_RE = re.compile(r"高清臻享")
 
+# 各播放器的回看占位符语法互不兼容，因此按播放器分套产出：
+#   ap                 ${(b)yyyyMMddHHmmss}   APTV / TVBox / DIYP / FongMi / 酷9 通用
+#   kodi               ${start}               Kodi pvr.iptvsimple 官方语法
+#   fongmi             ${(b)yyyyMMddHHmmss}   与 ap 同，但单独落文件便于电视端点选
+# 注意：裸 {start}/{end} 只有极少数播放器认，APTV 不认，主入口不能再用它。
 STYLES = (
-    ("diyp", "直播源.m3u", "{start}", "{end}"),
-    ("kodi", "直播源_kodi.m3u", "${start}", "${end}"),
+    ("ap", "直播源.m3u", "${(b)yyyyMMddHHmmss}", "${(e)yyyyMMddHHmmss}"),
+    ("kodi", "直播源_kodi.m3u", "${start:YmdHMS}", "${end:YmdHMS}"),
     ("fongmi", "直播源_tvbox_fongmi.m3u", "${(b)yyyyMMddHHmmss}", "${(e)yyyyMMddHHmmss}"),
 )
 
@@ -1078,7 +1083,9 @@ def write_outputs(out, cdn, channels, programs, backup_days, days, base_url="", 
         """同频道的其它清晰度档地址（4K 播不动时切 1080P 用）。"""
         return "%s/%s/live1/%s/%s/1.m3u8" % (cdn, alt["cp"], alt["code"], alt["code"])
 
-    def back_of(ch, va="{start}", vb="{end}"):
+    # 默认占位符必须是 ${(b)fmt}：裸 {start} 任何播放器都不认（FongMi 实测解析成空串）。
+    # /api/catchup 会自己用 strftime 生成时间，不依赖这里的占位符。
+    def back_of(ch, va="${(b)yyyyMMddHHmmss}", vb="${(e)yyyyMMddHHmmss}"):
         return "%s/%s/lookback/%s/%s?playseek=%s-%s" % (cdn, ch["cp"], ch["code"], ch["code"], va, vb)
 
     def dlabel(ch):
@@ -1145,7 +1152,10 @@ def write_outputs(out, cdn, channels, programs, backup_days, days, base_url="", 
         # 否则界面上的「Kodi 接入」标签会指向不存在的文件。
         tvg = (' url-tvg="%s/epg.xml" x-tvg-url="%s/epg.xml"' % (base, base)) if base else ""
 
-        def build_m3u(va, vb, catchup_mode="append"):
+        # 默认 default 模式：本源的「回看」是独立路径 /gitv/lookback/，
+        # 与直播路径 /gitv/live1/ 不同段，append（往直播URL追加参数）根本拼不出回看地址。
+        # 只有 default 才把 catchup-source 当完整回看 URL 用 —— 这是唯一正确模式。
+        def build_m3u(va, vb, catchup_mode="default"):
             lines = ["#EXTM3U" + tvg,
                      "# 江苏移动 IPTV｜更新: %s｜节目单: 前5天~明天｜%d 频道" % (stamp, len(channels))]
             for ch in fit:
@@ -1158,10 +1168,15 @@ def write_outputs(out, cdn, channels, programs, backup_days, days, base_url="", 
                 lines.append(live_of(ch))
             return "\n".join(lines)
 
-        write("iptv.m3u8", build_m3u("{start}", "{end}"))
-        write("kodi.m3u", build_m3u("${start}", "${end}"))
-        # FongMi 专用：回看占位符用 ${(b)}/${(e)}，catchup 用 default
-        write("fongmi.m3u", build_m3u("${(b)yyyyMMddHHmmss}", "${(e)yyyyMMddHHmmss}", "default"))
+        # 回看占位符按播放器语法分套产出（依据各自源码实测，不是猜的）：
+        #   ${(b)fmt}   FongMi(Catchup.java) / APTV(docs) / mytv-android(Release) / TVBox / 酷9
+        #   ${start:fmt} Kodi(pvr.iptvsimple CatchupController.cpp)
+        # 裸 {start} 谁都不认；${start} 无格式参数时 Kodi 会填整数时间戳，源站也不认。
+        ap = ("${(b)yyyyMMddHHmmss}", "${(e)yyyyMMddHHmmss}")
+        body = build_m3u(*ap)
+        write("iptv.m3u8", body)      # 主入口，绝大多数播放器用这个
+        write("fongmi.m3u", body)     # FongMi 面板固定读这个文件名，内容与主入口一致
+        write("kodi.m3u", build_m3u("${start:YmdHMS}", "${end:YmdHMS}"))
 
         x = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="jsydiptv">']
         for ch in channels:
@@ -1231,7 +1246,7 @@ def write_outputs(out, cdn, channels, programs, backup_days, days, base_url="", 
         for ch in fit:
             catch = ""
             if ch["back"] > 0:
-                catch = (' catchup="append" catchup-days="%d" catchup-source="%s"'
+                catch = (' catchup="default" catchup-days="%d" catchup-source="%s"'
                          % (backup_days, back_of(ch, va, vb)))
             lines.append('#EXTINF:-1 tvg-id="%s" tvg-name="%s" tvg-chno="%s" tvg-logo="%s" group-title="%s"%s,%s'
                          % (ch["uuid"], ch["name"], ch["num"], logo_of(ch), glabel(ch), catch, ch["name"]))
@@ -1384,7 +1399,9 @@ def write_orig_outputs(out, cdn, channels, programs, backup_days, base_url=""):
     def live_of(ch):
         return "%s/%s/live1/%s/%s/1.m3u8" % (cdn, ch["cp"], ch["code"], ch["code"])
 
-    def back_of(ch, va="{start}", vb="{end}"):
+    # 与 write_outputs 里的同名函数重复定义，默认值必须同为 ${(b)fmt}，
+    # 否则 orig.m3u8 会退回裸 {start} 语法（任何播放器都不认）。
+    def back_of(ch, va="${(b)yyyyMMddHHmmss}", vb="${(e)yyyyMMddHHmmss}"):
         return "%s/%s/lookback/%s/%s?playseek=%s-%s" % (
             cdn, ch["cp"], ch["code"], ch["code"], va, vb)
 
@@ -1420,7 +1437,8 @@ def write_orig_outputs(out, cdn, channels, programs, backup_days, base_url=""):
         for ch in chs_g:
             catch = ""
             if ch.get("back", 0) > 0:
-                catch = (' catchup="append" catchup-days="%d" catchup-source="%s"'
+                # 占位符用 back_of 的默认值（${(b)fmt}），不再逐个传参，避免两处不同步
+                catch = (' catchup="default" catchup-days="%d" catchup-source="%s"'
                          % (backup_days, back_of(ch)))
             lines.append('#EXTINF:-1 tvg-id="%s" tvg-name="%s" tvg-chno="%s" '
                          'tvg-logo="%s" group-title="%s"%s,%s'
@@ -2253,7 +2271,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return
             fa = datetime.fromtimestamp(s, TZ8).strftime("%Y%m%d%H%M%S")
             fb = datetime.fromtimestamp(e, TZ8).strftime("%Y%m%d%H%M%S")
-            url = ch["catchup"].replace("{start}", fa).replace("{end}", fb)
+            # 模板里的占位符写法随清单版本变过（裸 {start} / ${start} / ${(b)fmt}），
+            # 老数据也可能残留，所以不按字面 replace，而是找出所有 {...} 逐个替换：
+            # 起时间类（start/b）→ fa，止时间类（end/e）→ fb，其余原样保留。
+            def _sub(m):
+                tok = m.group(0).lower()
+                if "start" in tok or "(b" in tok or "{b" in tok:
+                    return fa
+                if "end" in tok or "(e" in tok or "{e" in tok or "utcend" in tok:
+                    return fb
+                return m.group(0)
+
+            url = re.sub(r"\$?\{[^}]+\}", _sub, ch["catchup"])
             self._json({"ok": True, "url": url,
                         "proxy": "/stream?u=" + urllib.parse.quote(url, safe=""),
                         "name": ch.get("name", ""), "from": fa, "to": fb})

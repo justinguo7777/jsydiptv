@@ -1,5 +1,5 @@
 appname=jsydiptv
-version=1.7.0
+version=1.7.1
 display_name=江苏移动IPTV
 desc=江苏移动 IPTV 直播源 / 回看 / 节目单自动更新。每天定时从移动 OTT 接口拉取全量频道表与节目单，生成可直接使用的 M3U 与 XMLTV 节目单，内置频道预览与台标本地化。4K 频道单独成组并置顶。定时时间、地市、回看天数等在「应用设置」中配置。需在江苏移动网络下使用。
 source=thirdparty

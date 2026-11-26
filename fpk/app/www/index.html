@@ -591,24 +591,33 @@
         <div class="luse"><b>TVBox / 影视仓</b> — 影视库一体，直播是其中一个入口；填「配置地址」即可。</div>
       </div>
 
-      <div class="sec">② 直播清单 M3U（按回看语法分三种，选错软件会没有回看）</div>
+      <div class="sec">② 直播清单 M3U（回看语法只有两派，填错就没有回看）</div>
 
       <div class="lcard">
-        <div class="lhead"><span class="fname">fongmi.m3u</span><span class="tagx">${(b)} 语法</span></div>
-        <div class="addr"><input readonly id="u_ku9" /><button class="btn" data-c="u_ku9">复制</button></div>
-        <div class="luse"><b>FongMi TV</b>（只要直播时）、<b>酷9</b>、<b>电视直播 mytv-android</b> — 这三个的回看变量都是 <code>${(b)yyyyMMddHHmmss}</code>。</div>
-      </div>
-
-      <div class="lcard">
-        <div class="lhead"><span class="fname">iptv.m3u8</span><span class="tagx">{start} 语法</span></div>
+        <div class="lhead"><span class="fname">iptv.m3u8</span><span class="tagx">${(b)} 语法 · 通用</span></div>
         <div class="addr"><input readonly id="u_diyp" /><button class="btn" data-c="u_diyp">复制</button></div>
-        <div class="luse"><b>DIYP</b>、<b>天光云影</b>、<b>TVBox 直接填 M3U</b>、多数通用播放器/盒子 — 标准回看变量 <code>{start}/{end}</code>。</div>
+        <div class="luse">
+          <b>优先用这个</b>。<b>APTV</b>、<b>FongMi</b>、<b>酷9</b>、<b>电视直播 mytv-android</b>、
+          <b>DIYP</b>、<b>天光云影</b>、<b>TVBox</b> 以及多数通用播放器都认
+          <code>${(b)yyyyMMddHHmmss}</code> 这套变量。
+          <span style="opacity:.75">（fongmi.m3u 内容与它完全相同，仅为兼容 FongMi 面板固定文件名而保留。）</span>
+        </div>
       </div>
 
       <div class="lcard">
-        <div class="lhead"><span class="fname">kodi.m3u</span><span class="tagx">${start} 语法</span></div>
+        <div class="lhead"><span class="fname">kodi.m3u</span><span class="tagx">${start:YmdHMS} 语法</span></div>
         <div class="addr"><input readonly id="u_kodi" /><button class="btn" data-c="u_kodi">复制</button></div>
-        <div class="luse"><b>Kodi</b>（PVR IPTV Simple Client 插件专用）— 回看变量是 <code>${start}/${end}</code>，<b>不要</b>和其他软件的混用。</div>
+        <div class="luse">
+          <b>仅 Kodi</b>（PVR IPTV Simple Client）需用这份。变量是
+          <code>${start:YmdHMS}</code>；<b>格式参数不能省</b> —— 少了它 Kodi 会填整数时间戳，
+          源站不认，表现为点了回看却还是直播。
+        </div>
+      </div>
+
+      <div class="lcard">
+        <div class="lhead"><span class="fname">fongmi.m3u</span><span class="tagx">同 iptv.m3u8</span></div>
+        <div class="addr"><input readonly id="u_ku9" /><button class="btn" data-c="u_ku9">复制</button></div>
+        <div class="luse">FongMi 面板里若只认这个文件名就填它，内容与 <code>iptv.m3u8</code> 一致。</div>
       </div>
 
       <div class="sec">③ 节目单 EPG（XMLTV，多个软件共用同一个）</div>
@@ -1426,12 +1435,12 @@ async function playCatchup(c, p){
     tip(r.msg || '回看不可用');
     return;
   }
-  // 复用直播播放管线：把回看地址当作临时源
-  const fake = Object.assign({}, c, { live: r.url });
+  // 复用直播播放管线：把回看地址当作临时源。
+  // _catchup 标记很关键：pullNow() 会用 CH 里的同名频道整体覆盖 LIVE，
+  // 不标记的话回看地址会被冲成直播地址（表现为「点了回看还是直播」）。
+  const fake = Object.assign({}, c, { live: r.url, _catchup: { start: p.start, end: p.end, title: p.title } });
   switchPage('live');
-  playChannel(fake);
-  $('#liveNow').innerHTML = '<b>' + esc(c.name) + '</b> · 回看 '
-      + hm(p.start) + '–' + hm(p.end) + ' · ' + esc(p.title);
+  playChannel(fake);   // updateNowBar 见到 _catchup 会自动渲染回看标题
   tip('回看：' + p.title);
 }
 
@@ -1661,9 +1670,9 @@ function fillUrls(){
   set('u_fongmi','/fongmi.json');
   set('u_tvbox','/tvbox.json');
   // ② 三种回看语法的 M3U
-  set('u_ku9','/fongmi.m3u');        // ${(b)} 语法：FongMi/酷9/电视直播
-  set('u_diyp','/iptv.m3u8');        // {start} 语法：DIYP/天光云影/通用
-  set('u_kodi','/kodi.m3u');         // ${start} 语法：Kodi
+  set('u_ku9','/fongmi.m3u');        // 同 iptv.m3u8，仅为 FongMi 面板文件名兼容
+  set('u_diyp','/iptv.m3u8');        // ${(b)} 语法：APTV/FongMi/酷9/mytv/DIYP/TVBox 通用
+  set('u_kodi','/kodi.m3u');         // ${start:YmdHMS} 语法：仅 Kodi（格式参数不可省）
   // ③ EPG
   set('u_epg','/epg.xml');
   // ④ 数据类
@@ -1761,7 +1770,9 @@ async function pullNow(){
   if(r && r.channels){
     CH = r.channels; GRPS = r.groups||{};
     refreshNowText();
-    if(LIVE){                       // 正在播放的频道，同步更新标题里的节目名
+    // 回看中不要覆盖 LIVE：直播源刷新只该更新直播频道的节目名，
+    // 一旦把 LIVE 换成直播版对象，回看地址(lookback URL)就丢了。
+    if(LIVE && !LIVE._catchup){
       const c = CH.find(x=>x.uuid===LIVE.uuid);
       if(c){ LIVE = c; updateNowBar(c); }
     }
@@ -1771,6 +1782,14 @@ async function pullNow(){
 function updateNowBar(c){
   const el = $('#liveNow');
   if(!el) return;
+  // 回看态：标题必须显示「回看 + 区间 + 节目名」，
+  // 不能显示当前直播节目名，否则用户会以为点错了、还是直播。
+  if(c._catchup){
+    const k = c._catchup;
+    el.innerHTML = '<b>'+esc(c.name)+'</b> · 回看 '
+      + hm(k.start) + '–' + hm(k.end) + ' · ' + esc(k.title);
+    return;
+  }
   el.innerHTML = '<b>'+esc(c.name)+'</b>'
     + (c.is_4k ? ' <span class="u4k" style="position:static;vertical-align:2px">4K</span>' : '')
     + (c.now ? (' · <b>'+esc(c.now.t)+'</b>（'+hm(c.now.s)+'–'+hm(c.now.e)+'）') : '');
