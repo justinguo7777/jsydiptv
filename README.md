@@ -8,13 +8,13 @@
 
 [![Release](https://img.shields.io/github/v/release/justinguo7777/jsydiptv?color=blue&style=flat-square)](https://github.com/justinguo7777/jsydiptv/releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-fnOS%20%7C%20Linux-lightgrey?style=flat-square)](https://www.fnnas.com/) [![Python](https://img.shields.io/badge/python-3.8%2B-blue?style=flat-square)](https://www.python.org/) [![Deps](https://img.shields.io/badge/dependencies-zero-brightgreen?style=flat-square)](#-核心特性)
 
-**277 个频道 · 251 个可回看 · 7 天节目单 · 4K 实测标注 · 每天自动更新**
+**江苏移动 IPTV 直播与回看 · 4K 实测标注 · 每天自动更新**
 
 [快速开始](#quickstart) · [两套清单](#two-lists) · [播放器接入](#players) · [常见问题](#faq) · [交流与反馈](#community)
 
 </div>
 
-![界面](docs/screenshot.png)
+![1.7.3 观看页示例](docs/screenshot.png)
 
 ---
 
@@ -38,11 +38,11 @@
 | 📺 **全量频道** | 江苏 13 地市聚合去重，实测 **277 个频道 / 22 个分组** |
 | ⏪ **回看能用** | **251 个频道支持回看**，按各播放器语法分别产出，不再出现"点了还是直播" |
 | 📅 **7 天节目单** | 前 7 天 ~ 后 3 天，约 **7 万条**节目，准确对上频道 |
-| 🔍 **4K 不虚标** | 20 个 4K 组频道 **实测分辨率**后标注真伪（14 个真 4K，其中 11 个 H.265） |
-| 🗂️ **智能分组** | 不再有"其他"大杂烩，按内容细分成 11 组，也可以一键切回机顶盒原样 |
+| 🔍 **4K 不虚标** | 只有实测宽高达到 3840×2160 才标真 4K；探测不到则标为待探测 |
+| 🗂️ **智能分组** | 不再有"其他"大杂烩，按内容细分成 11 组，另有按机顶盒上游分组重建的清单 |
 | 🖼️ **台标本地化** | 抓回 NAS 本地、哈希命名，不依赖外网、不掉图 |
 | 🔄 **定时更新** | 默认每天 03:30 自动刷新，可在应用设置里改 |
-| ✅ **自检与原子发布** | 抽样实测可播 + 隐私扫描，**通过才替换正式文件**，坏了保留上一版 |
+| ✅ **自检与原子发布** | 抽样检查直播清单、校验整代文件并扫描文本隐私字段；通过后一次切换，失败保留上一代 |
 | 📦 **零第三方依赖** | 服务端纯标准库，Python 3.8+，装完就能跑 |
 
 ---
@@ -56,10 +56,10 @@
 1. 到 [Releases](https://github.com/justinguo7777/jsydiptv/releases) 下载最新的 `jsydiptv-x.y.z.fpk`
 2. 飞牛「应用中心」→ 左下角「手动安装」→ 选择该 fpk
 3. 向导里**只需填服务端口**（默认 `18123`），点完成
-4. 浏览器打开 `http://<NAS-IP>:18123` 看频道列表，再到「播放器接入」页复制地址填进播放器
+4. 浏览器打开 `http://<NAS-IP>:18123` 看频道列表，再到「订阅」页复制地址填进播放器
 
 > 装好后在「应用设置」里可调：地市、每天更新时间、节目单天数、输出模式等。
-> 首次启动会同步拉一次全量数据，局域网约 13 秒。
+> 无历史产物时，首次启动先开放网页服务，再在后台更新，耗时取决于网络与节目量。已有产物的升级会沿用旧清单，直到下一次成功更新。
 
 > ⚠️ **建议不要改端口**：服务会跟着切，但 fnOS 桌面入口在安装时固定，改端口后图标打不开（需重装一次让入口重新注册）。
 
@@ -69,16 +69,16 @@
 
 ## 📋 两套清单，按需选择
 
-本应用同时产出**两套互不影响的清单**，装好后都在「播放器接入」页能看到地址：
+本应用同时产出**两套互不影响的清单**，装好后都在「订阅」页能看到地址：
 
 | | 智能分组清单（默认推荐） | 原版清单 |
 |---|---|---|
 | 文件 | `iptv.m3u8` / `kodi.m3u` / `fongmi.m3u` | `orig.m3u8` |
-| 分组 | 按内容细分：4K / 央视 / 卫视 / 江苏 / 地方(按市) / 影视剧场 / 少儿动画 / 体育竞技 / 生活纪录 / 音乐广播 / 购物 | **完全照搬机顶盒电视墙 11 组**（超高清/央视/本地/卫视/体育/专业频道/影视/少儿/生活/广播/购物） |
+| 分组 | 按内容细分：4K / 央视 / 卫视 / 江苏 / 地方(按市) / 影视剧场 / 少儿动画 / 体育竞技 / 生活纪录 / 音乐广播 / 购物 | **按机顶盒电视墙上游 11 组重建**（超高清/央视/本地/卫视/体育/专业频道/影视/少儿/生活/广播/购物） |
 | 4K | 实测分辨率后单独成组并置顶，真 4K / 高清臻享 分开标注 | 沿用上游「超高清」组，真伪不标注 |
 | 适合 | 想直接能用的、讨厌台乱混在一起的 | 习惯机顶盒那套分组顺序的 |
 
-> 想看**电视墙原样**就用原版清单；想**分类清楚好找台**就用智能分组清单。
+> 想看**上游电视墙的分组方式**就用原版清单；想**分类清楚好找台**就用智能分组清单。
 
 ---
 
@@ -114,18 +114,24 @@
 
 > 另外：**酷9 的 EPG「解析格式」必须手动改成 XmlTV**（默认是 DIYP），否则节目单一直空着。
 
-![播放器接入页](docs/screenshot-player.png)
+![1.7.3 订阅页示例](docs/screenshot-player.png)
 
 ---
+
+### 输出模式与节目单
+
+- 精简和完整模式均提供通用 M3U、Kodi、FongMi、TVBox、XMLTV 与原版分组三件套。完整模式额外输出 TXT、CSV 等格式。
+- FongMi 按日节目单生成当天及配置范围内的未来日期；保留至少一天的未来抓取窗口，可在午夜到次日更新之间继续使用。
+- 关闭 EPG 后，从**下一次成功更新**开始不抓取节目；节目单地址仍可读取空表，播放器配置不再附带 EPG 地址。直播和支持回看的清单仍可用，但网页节目单不会显示可点选的回看节目。
 
 ## 📖 关于 4K 频道
 
 - 4K 组包含两类：**真 4K**（实测 3840×2160）与「**高清臻享**」（运营商高码率档）。
-- 每次更新都会实拉切片解析 SPS 拿真实分辨率：真 4K 打蓝色「4K」徽标，实测只有 1080P 的臻享档打紫色「臻享」徽标并注明真实分辨率，**不谎报为 4K**。
-- 当前实测：20 个 4K 组频道中 **14 个真 4K**（11 个 H.265/HEVC + 3 个 H.264），另 6 个为 1080P 臻享档。
+- 每次更新都会实拉切片解析 SPS 拿真实分辨率：探测不到时标「待探测」；真 4K 打蓝色「4K」徽标，实测只有 1080P 的臻享档打紫色「臻享」徽标并注明真实分辨率，**不谎报为 4K**。
+- 频道数和编码会随运营商上游改变；以当前实例的实测结果为准。
 - 4K 组内 CCTV 台置顶并按台号升序（CCTV-1 4K → CCTV-16 4K → 央视4K → 各卫视 4K）。
 - ⚠️ **播放设备不支持 HEVC 时，4K 台会出现「有声音、画面全黑」** —— 这不是源坏了。
-  网页预览里会说明原因并提供「切到低清晰度」按钮降成 1080P；电视端播放器（酷9 / 电视直播 / FongMi / 影视仓）通常能硬解，可直接看 4K。
+  网页直播预览有合适备选档时可尝试降档；回看时不切换到直播档，可复制回看地址交给外部播放器。电视端播放器（酷9 / 电视直播 / FongMi / 影视仓）通常能硬解，可直接看 4K。
 
 ---
 
@@ -183,7 +189,7 @@
 <details>
 <summary><b>更新后清单还是旧的</b></summary>
 
-清单不是启动时生成的，由定时任务产出。装完新版本或改完配置，要到网页上点一次「立即更新」，或等下次定时任务。
+已有清单时，启动会先沿用旧数据。升级或改配置后，到网页点一次「立即更新」，或等待下次定时任务成功。
 </details>
 
 <details>
@@ -206,7 +212,7 @@
 
 ## 🛠️ 开发
 
-数据来源与接口参数见 [DEVELOPMENT-REPORT.md](DEVELOPMENT-REPORT.md)，要点：
+数据来源与接口参数见 [历史开发报告](docs/history/development-report.md)，要点：
 
 ```
 EPG_BASE = http://lvpepg.uni.jsa.bcs.ottcn.com:8080/cms-lvp-epg
@@ -240,7 +246,7 @@ fpk/
 ├── ICON_256.PNG      # 256x256 包图标
 ├── app/
 │   ├── server/       # server.py（HTTP + 抓取 + 生成）、media_probe.py（TS 解析）
-│   ├── www/          # index.html（单文件前端）、hls.min.js
+│   ├── www/          # index.html、workspace.css、workspace.js、hls.min.js
 │   └── ui/           # 桌面入口配置与图标
 ├── cmd/              # start/stop/status、安装与配置回调
 ├── config/           # privilege、resource
@@ -252,9 +258,18 @@ fpk/
 根层必须是 **4 个文件（`ICON.PNG` `ICON_256.PNG` `app.tgz` `manifest`）+ 3 个目录（`cmd` `config` `wizard`）**：
 
 ```bash
-# ⚠️ app.tgz 顶层必须直接是 server/ ui/ www/，不能套一层 app/
-cd fpk/app && tar czf ../app.tgz server ui www && cd ..
-tar czf jsydiptv-x.y.z.fpk ICON.PNG ICON_256.PNG app.tgz manifest cmd config wizard
+# 在仓库根目录执行，GNU tar；先生成运行版本文件和网页 LOGO，再打包
+root="$PWD"
+stage=$(mktemp -d)
+trap 'rm -rf -- "$stage"' EXIT
+ver=$(sed -n 's/^version=//p' fpk/manifest)
+mkdir -p "$stage/app" "$stage/pkg"
+cp -r fpk/app/server fpk/app/ui fpk/app/www "$stage/app/"
+cp -r fpk/ICON.PNG fpk/ICON_256.PNG fpk/manifest fpk/cmd fpk/config fpk/wizard "$stage/pkg/"
+printf '%s' "$ver" > "$stage/app/www/VERSION"
+install -m 644 fpk/ICON_256.PNG "$stage/app/www/app-logo.png"
+tar -C "$stage/app" --exclude=__pycache__ --exclude='*.pyc' -czf "$stage/pkg/app.tgz" server ui www
+tar -C "$stage/pkg" -czf "$root/jsydiptv-$ver.fpk" ICON.PNG ICON_256.PNG app.tgz manifest cmd config wizard
 ```
 
 权限：`manifest` / 图标 644，`cmd/` `wizard/` `config/` 目录 755，`cmd/*` 脚本 755。
@@ -262,8 +277,9 @@ tar czf jsydiptv-x.y.z.fpk ICON.PNG ICON_256.PNG app.tgz manifest cmd config wiz
 ### 验收脚本
 
 ```bash
-python3 verify/round1_api.py          # 接口/产物/数据/安全 34 项
-# verify/round2_ui.js 在浏览器控制台执行  # UI/交互 29 项
+python3 -B -m unittest discover -s verify -p 'test_*.py'
+python3 -B verify/round1_api.py --base-url http://127.0.0.1:18123 --version 1.7.3 --mode minimal --epg on
+# verify/round2_ui.js 在浏览器控制台执行
 ```
 
 ---
@@ -292,7 +308,7 @@ python3 verify/round1_api.py          # 接口/产物/数据/安全 34 项
 ## 🙏 致谢
 
 - 感谢恩山 **lff520520** 提供思路和实现方案：[原贴地址](https://www.right.com.cn/forum/thread-8499027-1-2.html)
-- 上游血统来自 TVBox 系与 FongMi TV 专版两套外围包的分组与产物结构调研，详见 [UPSTREAM-COMPARE.md](UPSTREAM-COMPARE.md)
+- 上游血统来自 TVBox 系与 FongMi TV 专版两套外围包的分组与产物结构调研，详见 [上游对照](docs/history/upstream-comparison.md)
 
 ## License
 
@@ -303,3 +319,9 @@ python3 verify/round1_api.py          # 接口/产物/数据/安全 34 项
 **仅供个人学习与自用，请勿用于商业用途或大规模传播**
 
 </div>
+## 本地开发
+
+- `fpk/`：应用源码、图标和 fnOS 向导。
+- `verify/`：API、界面和离线回归脚本；装机见 [验收清单](docs/verification.md)。
+- `docs/`：项目文档与图片；[1.8.0 改造记录](docs/workspace-1.8.0.md) 包含功能优先级和目录迁移。
+- 构建与验收分别见上面的「打包」和「验收脚本」。

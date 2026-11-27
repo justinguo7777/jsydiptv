@@ -1,131 +1,272 @@
 # -*- coding: utf-8 -*-
-"""第一轮验收：接口 / 产物 / 数据质量 / 安全
+"""第一轮验收：对明确指定的测试实例做只读 API / 产物检查；不请求媒体地址。"""
+import argparse
+from collections import Counter
+from datetime import datetime, timedelta, timezone
+import json
+import re
+import sys
+from urllib.error import HTTPError
+from urllib.parse import parse_qs, quote, urlencode, urlsplit
+from urllib.request import HTTPRedirectHandler, ProxyHandler, build_opener
+import xml.etree.ElementTree as ET
 
-用法：/home/agent/cow/venv/bin/python3 verify/round1_api.py
-（直连 NAS 18123，需在江苏移动网络内执行）
-"""
-import json, urllib.request, urllib.parse, re, sys, time
+TZ8 = timezone(timedelta(hours=8))
+AP = ("${(b)yyyyMMddHHmmss}", "${(e)yyyyMMddHHmmss}")
+KODI = ("${start:YmdHMS}", "${end:YmdHMS}")
 
-BASE="http://192.168.2.3:18123"
-def get(p, raw=False, timeout=40):
-    req=urllib.request.Request(BASE+p)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        d=r.read()
-    return d if raw else json.loads(d.decode('utf-8','replace'))
 
-PASS=[]; FAIL=[]
-def ck(name, cond, detail=""):
-    (PASS if cond else FAIL).append(name)
-    print(("  ✅ " if cond else "  ❌ ")+name+((" — "+str(detail)) if detail else ""))
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
-# 1 状态
-st=get("/api/status")
-ck("状态接口 ok", st.get("ok"))
-m=st.get("meta") or {}
-ck("meta 有 uhd 字段", m.get("uhd") is not None, m.get("uhd"))
-ck("meta 有 uhd_h265", m.get("uhd_h265") is not None, m.get("uhd_h265"))
-ck("facets 有 g_uhd", st["facets"].get("g_uhd") is not None, st["facets"].get("g_uhd"))
-ck("facets.order 4K 置顶", (st["facets"].get("order") or [None])[0]=="4K", st["facets"].get("order"))
 
-# 2 频道
-ch=get("/api/channels?group=&q=")
-chs=ch["channels"]
-ck("频道数 277（4K 组去重 1 条同流）", ch["total"]==277, ch["total"])
-grps=ch["groups"]
-ck("存在 4K 分组", "4K" in grps, grps.get("4K"))
-ck("4K 数量 = meta.uhd", grps.get("4K")==m.get("uhd"), "%s vs %s"%(grps.get("4K"), m.get("uhd")))
-ck("无「超高清」旧分组名", "超高清" not in grps)
-ck("无「其他」垃圾组", "其他" not in grps, list(grps.keys()))
-# 顺序校验（1.6.0 新顺序：4K→央视→卫视→江苏→地方→6 个二级组）
-order=ch["order"]
-EXPECT=["4K","央视","卫视","江苏","地方","影视剧场","少儿动画","体育竞技","生活纪录","音乐广播","购物"]
-ck("order 顺序为 11 分组新方案", order==EXPECT, order)
-# 6 个二级组都应有频道
-for gg in ["影视剧场","少儿动画","体育竞技","生活纪录","音乐广播","购物"]:
-    ck("二级组 %s 有频道"%gg, grps.get(gg,0)>0, grps.get(gg))
-# 4K 组：真 4K 都有 codec；高清臻享允许非 4K 但要有 w/h
-k4=[c for c in chs if c["group"]=="4K"]
-ck("4K 组全部有 codec", all(c.get("codec") for c in k4), [c["name"] for c in k4 if not c.get("codec")])
-ck("4K 组全部有实测分辨率 w/h", all(c.get("w") and c.get("h") for c in k4), [c["name"] for c in k4 if not (c.get("w") and c.get("h"))])
-real=[c for c in k4 if c.get("is_4k")]
-zhx1080=[c for c in k4 if c.get("zhx") and not c.get("is_4k")]
-ck("4K 组含真 4K 且标注清晰", len(real)>=13, len(real))
-print("     4K 组 %d 个：真 4K %d，高清臻享(1080P) %d"%(len(k4), len(real), len(zhx1080)))
-h265=[c["name"] for c in k4 if "265" in (c.get("codec") or "")]
-print("     其中 H.265 %d 个"%len(h265))
-# 4K 组内同流不得重复（cp+code 唯一）
-codes=[(c.get("live") or "") for c in k4]
-ck("4K 组内无同流重复", len(codes)==len(set(codes)), "%d/%d"%(len(set(codes)),len(codes)))
-# 4K 组 CIAV 顺序：CCTV 台在最前且数字升序
-def cctv_no(n):
-    import re as _re
-    nm=_re.sub(r"(4K|高清臻享|UHD|超高清)$","",n,flags=_re.I).strip()
-    mm=_re.match(r"CCTV[- ]?(\d+)",nm,_re.I)
-    return int(mm.group(1)) if mm else None
-nums=[cctv_no(c["name"]) for c in k4]
-cctv_nums=[x for x in nums if x is not None]
-# CCTV 台应连续出现在最前且升序
-ck("4K 组 CCTV 台按数字升序排列在最前", cctv_nums==sorted(cctv_nums), cctv_nums)
+def absolute_http(url):
+    parts = urlsplit(url or "")
+    return parts.scheme in {"http", "https"} and bool(parts.hostname)
 
-# 央视组必须含 CCTV-1
-cctv_grp=[c for c in chs if c["group"]=="央视"]
-ck("央视组含 CCTV-1", any(c["name"]=="CCTV-1" for c in cctv_grp), [c["name"] for c in cctv_grp][:5])
-ck("央视组 CCTV-1 是 1080P 源", any(c["name"]=="CCTV-1" and not c.get("is_4k") for c in cctv_grp))
-ck("央视组含 CCTV-2..17 连续", set("CCTV-%d"%i for i in range(2,18)).issubset(set(c["name"] for c in cctv_grp)), sorted(c["name"] for c in cctv_grp if c["name"].startswith("CCTV-")))
 
-# 3 实时 now：核对 now 是否等于当前时间在播
-now=int(time.time())
-bad=[]
-for c in chs:
-    n=c.get("now")
-    if n:
-        if not (n["s"]<=now<n["e"]): bad.append(c["name"])
-ck("now 字段全部落在当前时段", not bad, bad[:5])
-# 未选频道也能确认没有 03:30 冻结：抽查 20 个 now 起始时间应分散
-starts=set(c["now"]["s"] for c in chs if c.get("now"))
-ck("now 起始时间分散（非同一快照）", len(starts)>10, len(starts))
+def serves(url, path):
+    return absolute_http(url) and urlsplit(url).path == path
 
-# 4 产物文件
-for f,ct in [("/iptv.m3u8","m3u"),("/kodi.m3u","m3u"),("/fongmi.m3u","m3u"),
-             ("/fongmi.json","json"),("/tvbox.json","json"),("/epg.xml","xml"),
-             ("/4k.json","json")]:
+
+def program_time(value):
+    return datetime.strptime(value, "%Y%m%d%H%M%S %z")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base-url", required=True, help="测试实例 HTTP(S) origin，不含路径")
+    parser.add_argument("--version", required=True, help="本次待验 FPK 的 manifest 版本")
+    parser.add_argument("--mode", choices=("full", "minimal"), required=True)
+    parser.add_argument("--epg", choices=("on", "off"), required=True)
+    parser.add_argument("--generation", help="核对既有产物代号，例如启停后的保留验证")
+    args = parser.parse_args()
+    base = args.base_url.rstrip("/")
+    target = urlsplit(base)
+    if not absolute_http(base) or target.path or target.query or target.fragment or target.username is not None:
+        parser.error("--base-url 必须是无路径、参数、凭据的 HTTP(S) origin")
+    epg_on = args.epg == "on"
+    opener = build_opener(ProxyHandler({}), NoRedirect())
+    passed, failed = [], []
+
+    def get(path, raw=False):
+        with opener.open(base + path, timeout=40) as response:
+            if response.status != 200:
+                raise ValueError(f"{path}: HTTP {response.status}")
+            body = response.read()
+        return body if raw else json.loads(body)
+
+    def ck(name, cond, detail=""):
+        (passed if cond else failed).append(name)
+        print(f"  {'✅' if cond else '❌'} {name}" + (f" — {detail}" if detail != "" else ""))
+        return cond
+
+    def playlist(path, expected, tokens, backup_days):
+        lines = get(path, raw=True).decode("utf-8-sig").splitlines()
+        header, *body = lines
+        has_tvg = bool(re.search(r'\b(?:url-tvg|x-tvg-url)\s*=', header, re.I))
+        tvg_urls = re.findall(r'\b(?:url-tvg|x-tvg-url)="([^"]*)"', header, re.I)
+        required_tvg = epg_on and args.mode == "minimal" and path != "/orig.m3u8"
+        ck(f"{path} M3U 头与 EPG 开关", header.split(maxsplit=1)[0] == "#EXTM3U"
+           and (epg_on or not has_tvg) and (not required_tvg or has_tvg)
+           and (not has_tvg or (bool(tvg_urls) and all(serves(u, "/orig_epg.xml" if path == "/orig.m3u8" else "/epg.xml") for u in tvg_urls))))
+        actual = []
+        attrs_ok = True
+        pending = None
+        for line in body:
+            if line.startswith("#EXTINF:"):
+                if pending is not None:
+                    raise ValueError(f"{path}: 有频道缺直播地址")
+                # 只取开头的带引号属性，不让逗号后的频道名干扰解析。
+                prefix = re.match(r'#EXTINF:[^\s,]+((?:\s+[\w-]+="[^"]*")*),', line)
+                if not prefix:
+                    raise ValueError(f"{path}: EXTINF 格式错误")
+                pending = dict(re.findall(r'([\w-]+)="([^"]*)"', prefix[1]))
+            elif line.strip() and not line.startswith("#"):
+                if pending is None:
+                    raise ValueError(f"{path}: 直播地址缺 EXTINF")
+                uid, group = pending.get("tvg-id"), pending.get("group-title")
+                actual.append((group, uid, line.strip()))
+                attrs = {k for k in pending if k.startswith("catchup")}
+                source = urlsplit(pending.get("catchup-source", ""))
+                has_catchup = expected.get((group, uid, line.strip()), False)
+                attrs_ok = attrs_ok and (not pending.get("tvg-logo") or absolute_http(pending["tvg-logo"]))
+                if has_catchup:
+                    attrs_ok = attrs_ok and (pending.get("catchup") == "default"
+                        and pending.get("catchup-days") == str(backup_days)
+                        and absolute_http(pending.get("catchup-source")) and "/lookback/" in source.path
+                        and parse_qs(source.query).get("playseek") == ["-".join(tokens)])
+                else:
+                    attrs_ok = attrs_ok and not attrs
+                pending = None
+        ck(f"{path} 分组 / UUID / 直播地址一致", bool(actual) and pending is None
+           and Counter(actual) == Counter(expected.keys()), len(actual))
+        ck(f"{path} 回看模板与台标地址正确", bool(actual) and attrs_ok)
+
+    def xmltv(path, expected_ids):
+        root = ET.fromstring(get(path, raw=True))
+        ids = [ch.get("id") for ch in root.findall("channel")]
+        programs = root.findall("programme")
+        id_set = set(ids)
+        valid_ids = expected_ids == id_set if epg_on else (not ids or expected_ids == id_set)
+        ck(f"{path} XMLTV 结构 / 频道 ID / 台标", root.tag == "tv" and valid_ids
+           and len(ids) == len(id_set) and all(absolute_http(i.get("src")) for i in root.findall("channel/icon")))
+        ck(f"{path} 节目单与 EPG 开关一致", bool(programs) == epg_on and all(
+            p.get("channel") in id_set and p.findtext("title") and program_time(p.attrib["start"]) < program_time(p.attrib["stop"])
+            for p in programs), len(programs))
+        return programs
+
+    def status():
+        doc = get("/api/status")
+        m = doc["meta"]
+        ck("状态成功且未在更新", doc.get("ok") is True and m.get("status") == "ok"
+           and not doc.get("updating", {}).get("running") and not doc.get("updating", {}).get("error"))
+        ck("运行版本与待验包一致", doc.get("version") == args.version, doc.get("version"))
+        gen = m.get("generation")
+        ck("有效产物代号", isinstance(gen, (str, int)) and not isinstance(gen, bool)
+           and bool(str(gen).strip()) and (args.generation is None or str(gen) == args.generation), gen)
+        cfg = doc["config"]
+        ck("配置符合指定模式/EPG 开关", cfg.get("output_mode") == m.get("output_mode") == args.mode
+           and cfg.get("epg_enable") is m.get("epg_enabled") is epg_on)
+        return doc
+
+    def expect_http(path, expected):
+        try:
+            get(path, raw=True)
+        except HTTPError as exc:
+            return exc.code == expected
+        return False
+
+    print(f"target={base} version={args.version} mode={args.mode} epg={args.epg}")
     try:
-        raw=get(f, raw=True)
-        ck("产物 %s 可访问"%f, len(raw)>100, len(raw))
-    except Exception as e:
-        ck("产物 %s 可访问"%f, False, e)
+        st = status()
+        meta, facets = st["meta"], st["facets"]
+        before = datetime.now(TZ8).timestamp()
+        catalog = get("/api/channels?group=&q=")
+        after = datetime.now(TZ8).timestamp()
+        channels = catalog["channels"]
+        by_id = {str(c["uuid"]): c for c in channels}
+        groups = dict(Counter(c["group"] for c in channels))
+        order = catalog["order"]
+        ck("频道数、ID、分组与状态一致", catalog.get("ok") is True and bool(channels)
+           and len(channels) == len(by_id) == catalog["total"] == meta["channels"]
+           and groups == catalog["groups"] == facets["top"] and catalog.get("generation") == meta["generation"], len(channels))
+        ck("二次分组顺序与状态一致，4K 置顶，无旧分组", order == facets["order"]
+           and order[:1] == ["4K"] and len(order) == len(set(order))
+           and not {"超高清", "其他"}.intersection(groups))
+        uhd = [c for c in channels if c["group"] == "4K"]
+        ck("4K 组与状态一致、无同流重复", len(uhd) == meta["uhd"] == facets["g_uhd"]
+           and len(uhd) == len({c["live"] for c in uhd}))
+        cctv = [re.match(r"CCTV[- ]?(\d+)", re.sub(r"(4K|高清臻享|UHD|超高清)$", "", c["name"], flags=re.I).strip(), re.I)
+                for c in uhd]
+        nums = [int(m[1]) for m in cctv if m]
+        ck("4K 组 CCTV 在最前且数字升序", all(cctv[:len(nums)]) and nums == sorted(nums), nums)
+        uhd_data = get("/4k.json")["channels"]
+        uhd_fields = ("uuid", "name", "live", "codec", "w", "h", "zhx")
+        ck("4k.json 与 4K 组实测字段/真 4K 标记一致", len(uhd_data) == len(uhd) and all(
+            all(x.get(k) == c.get(k) for k in uhd_fields) and x.get("real_4k") is c.get("is_4k")
+            and (not c.get("is_4k") or (c.get("w", 0) >= 3840 and c.get("h", 0) >= 2160 and c.get("codec")))
+            for x, c in zip(uhd_data, uhd)))
+        catchup = [c for c in channels if c.get("catchup")]
+        ck("回看频道数与状态一致", bool(catchup) and len(catchup) == meta["with_catchup"])
+        main_list = {(c["group"], str(c["uuid"]), c["live"]): bool(c["catchup"]) for c in channels}
+        for path, tokens in (("/iptv.m3u8", AP), ("/fongmi.m3u", AP), ("/kodi.m3u", KODI)):
+            playlist(path, main_list, tokens, meta["backup_days"])
 
-m3u=get("/iptv.m3u8", raw=True).decode("utf-8","replace")
-ck("iptv.m3u8 含 4K 分组", 'group-title="4K"' in m3u)
-kodi=get("/kodi.m3u", raw=True).decode("utf-8","replace")
-ck("kodi.m3u 含 4K 分组", 'group-title="4K"' in kodi)
-ck("kodi.m3u 回看用 ${start}", "${start}" in kodi)
-fm=get("/fongmi.m3u", raw=True).decode("utf-8","replace")
-ck("fongmi.m3u 含 4K 分组", 'group-title="4K"' in fm)
-ck("fongmi.m3u 回看用 ${(b)", "${(b)" in fm)
-epg=get("/epg.xml", raw=True).decode("utf-8","replace")
-ck("epg.xml 有 programme", epg.count("<programme ")>1000, epg.count("<programme "))
-ck("epg.xml icon 为绝对地址", 'src="http://' in epg)
+        orig = get("/orig.json")
+        orig_list = {(g["name"], str(c["uuid"]), c["live"]): bool(c["back"])
+                     for g in orig["groups"] for c in g["channels"]}
+        orig_ids = {uid for _, uid, _ in orig_list}
+        ck("原版分组、条目和唯一频道数自洽（允许跨组重复）", bool(orig_list)
+           and len(orig["groups"]) == len({g["assortId"] for g in orig["groups"]})
+           == len({g["name"] for g in orig["groups"]})
+           and all(g["count"] == len(g["channels"]) for g in orig["groups"])
+           and sum(g["count"] for g in orig["groups"]) == len(orig_list) == orig["total_entries"]
+           and orig_ids.issubset(by_id) and len(orig_ids) == orig["unique_channels"])
+        ck("原版 CLI/界面数据与频道标识、地址和回看能力一致", all(
+            live == by_id[uid]["live"] and supported == bool(by_id[uid]["catchup"])
+            for (_, uid, live), supported in orig_list.items()))
+        playlist("/orig.m3u8", orig_list, AP, meta["backup_days"])
+        main_epg = xmltv("/epg.xml", set(by_id))
+        xmltv("/orig_epg.xml", orig_ids)
+        ck("XMLTV 节目数与 meta.epg_programs 一致", len(main_epg) == meta["epg_programs"], len(main_epg))
 
-k4j=get("/4k.json")
-ck("4k.json 频道数=4K 组", len(k4j["channels"])==grps.get("4K"), len(k4j["channels"]))
-ck("4k.json 每条有 live/codec", all(c.get("live") and c.get("codec") for c in k4j["channels"]))
+        fongmi = get("/fongmi.json")
+        tvbox = get("/tvbox.json")
+        day_template = "/epg/{id}/{date}.json"
+        for name, doc, list_path, epg_path in (
+            ("FongMi", fongmi, "/fongmi.m3u", day_template), ("TVBox", tvbox, "/iptv.m3u8", "/epg.xml"),
+        ):
+            lives = doc["lives"]
+            primary = next((item for item in lives if serves(item.get("url"), list_path)), {})
+            ck(f"{name} JSON 直播入口", primary.get("type") == 0 and all(absolute_http(x.get("url")) for x in lives))
+            if epg_on:
+                ck(f"{name} JSON 节目单入口", any(serves(url, epg_path) for url in doc["epg"])
+                   and (serves(primary.get("epg"), epg_path) if name == "FongMi" else serves(doc.get("epg_url"), epg_path)))
+            else:
+                ck(f"{name} JSON 不广播 EPG 地址", not any({"epg", "epg_url"}.intersection(x) for x in [doc, *lives]))
+        if args.mode == "full":
+            ck("完整模式额外提供 live.txt", bool(get("/live.txt", raw=True).strip()))
+        else:
+            ck("精简模式不保留完整模式的 live.txt", expect_http("/live.txt", 404))
 
-# 5 回看
-one=[c for c in chs if c.get("catchup")][0]
-cu=get("/api/catchup?uuid=%s&start=%d&end=%d"%(urllib.parse.quote(one["uuid"]), now-7200, now-3600))
-ck("catchup 接口可用", cu.get("ok"), cu.get("msg"))
+        now = datetime.now(TZ8)
+        lo = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        hi = lo + timedelta(days=1)
+        live_now = [c["now"] for c in channels if c.get("now")]
+        # GET 往返可能恰逢换档；用请求前后时刻而不是频道数量来判定。
+        now_channel = float(now.timestamp())
+        ck("now 数据与 EPG 开关一致，且覆盖请求时段", not live_now if not epg_on else all(
+            n["s"] <= after and before < n["e"] and n["s"] < n["e"] and n["t"] for n in live_now))
+        if epg_on:
+            # 根据 XMLTV 当天节目挑样本，并与实际按天接口对比。
+            today = [(p.get("channel"), program_time(p.attrib["start"]), program_time(p.attrib["stop"]), p.findtext("title"))
+                     for p in main_epg if program_time(p.attrib["start"]) < hi and program_time(p.attrib["stop"]) > lo]
+            uid = next((uid for uid, *_ in today if by_id[uid].get("catchup")), None)
+            if not ck("找到当天有节目且支持回看的频道", uid is not None):
+                raise ValueError("无法验证 FongMi 按天节目单和实际节目时段")
+        else:
+            uid = str(catchup[0]["uuid"])
+            today = []
+        day = lo.date().isoformat()
+        body = get(f"/epg/{quote(uid, safe='')}/{day}.json")
+        expected_day = {(s.astimezone(TZ8).strftime("%H:%M"), e.astimezone(TZ8).strftime("%H:%M"), title)
+                        for key, s, e, title in today if key == uid}
+        actual_day = {(p["start"], p["end"], p["title"]) for p in body["epg_data"]}
+        ck("FongMi 当天 JSON 日期/时段/标题与 XMLTV 一致", body["date"] == day and actual_day == expected_day,
+           len(body["epg_data"]))
+        absent_day = (lo - timedelta(days=1)).date().isoformat()
+        absent = get(f"/epg/{quote(uid, safe='')}/{absent_day}.json")
+        ck("FongMi 非生成日期返回带日期的空表", absent == {"date": absent_day, "epg_data": []})
+        e = get("/api/epg?" + urlencode({"uuid": uid}))
+        programs = e["programs"]
+        ck("按频道 API 结构 / EPG 开关", e.get("ok") is True and e.get("uuid") == uid
+           and e.get("count") == len(programs) and bool(programs) == epg_on)
+        past = [p for p in programs if p["end"] <= now_channel and 0 < now_channel - p["start"] < meta["backup_days"] * 86400]
+        if epg_on and not ck("找到回看有效期内的已播节目", bool(past)):
+            raise ValueError("未找到已播节目，不能用虚构节目替代")
+        start, end = (lambda p: (p["start"], p["end"]))(max(past, key=lambda p: p["end"])) if past else (int(now_channel) - 7200, int(now_channel) - 3600)
+        result = get("/api/catchup?" + urlencode({"uuid": uid, "start": start, "end": end}))
+        times = [datetime.fromtimestamp(t, TZ8).strftime("%Y%m%d%H%M%S") for t in (start, end)]
+        result_url = result.get("url", "")
+        ck("回看接口生成正确时区和独立 lookback 路径（不等于可播）", result.get("ok") is True
+           and absolute_http(result_url) and "/lookback/" in urlsplit(result_url).path
+           and parse_qs(urlsplit(result_url).query).get("playseek") == ["-".join(times)]
+           and [result.get("from"), result.get("to")] == times)
+        ck("非媒体主机被拒绝（403）", expect_http("/api/spec?" + urlencode({"u": "http://fixture.invalid/test.m3u8"}), 403))
+        final = get("/api/status")
+        ck("验收期间实例版本、产物代号与配置未变且未在更新",
+           final.get("version") == st.get("version") and final["meta"].get("generation") == meta.get("generation")
+           and final.get("config") == st.get("config") and not final.get("updating", {}).get("running")
+           and not final.get("updating", {}).get("error"))
+    except Exception as exc:
+        ck("验收未完成", False, exc)
+    print(f"\n=== 第一轮：{len(passed)} 通过 / {len(failed)} 失败")
+    if failed:
+        print("失败项:", "; ".join(failed))
+    return bool(failed)
 
-# 6 EPG 接口
-e=get("/api/epg?uuid="+urllib.parse.quote(one["uuid"]))
-ck("epg 接口返回节目", e.get("count",0)>10, e.get("count"))
 
-# 7 安全
-try:
-    get("/api/spec?u="+urllib.parse.quote("http://example.com/x.m3u8"))
-    ck("非媒体源被拒", False)
-except urllib.error.HTTPError as ex:
-    ck("非媒体源被拒(403)", ex.code==403, ex.code)
-
-print("\n=== 第一轮：%d 通过 / %d 失败"%(len(PASS),len(FAIL)))
-if FAIL: print("失败项:", FAIL); sys.exit(1)
+if __name__ == "__main__":
+    sys.exit(main())

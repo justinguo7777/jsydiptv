@@ -111,7 +111,7 @@
       {
         "type": "switch",
         "field": "wizard_epg_enable",
-        "label": "拉取节目单（EPG）",
+        "label": "拉取节目单（EPG，下次成功更新后生效）",
         "initValue": "true"
       },
       {

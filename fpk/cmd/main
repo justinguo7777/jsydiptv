@@ -18,25 +18,24 @@ fi
 
 log(){ echo "$(date '+%Y-%m-%d %H:%M:%S') [main] $*" >> "$LOG"; }
 
-# 列出所有运行本应用服务端的 PID。
-# 不依赖 PID 文件：历史遗留实例、被 reparent 到 1 的孤儿进程都能找到。
-# 用本应用独有路径匹配，不会误杀其他 python 进程。
+# 按实际参数识别服务进程，避免依赖可能过期或被复用的 PID 文件。
+is_own_pid(){
+    case "$1" in ''|*[!0-9]*) return 1 ;; esac
+    [ -r "/proc/$1/cmdline" ] || return 1
+    tr '\000' '\n' < "/proc/$1/cmdline" 2>/dev/null | sed -n '2p' | grep -Fxq -- "$SRV"
+}
+
 own_pids(){
     for d in /proc/[0-9]*; do
-        [ -r "$d/cmdline" ] || continue
-        c="$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)" || continue
-        case "$c" in
-            *"$SRV"*) echo "${d#/proc/}" ;;
-        esac
+        p="${d#/proc/}"
+        is_own_pid "$p" && echo "$p"
     done
 }
 
-# PID 文件里的进程（若仍存活）
 running(){
     [ -f "$PIDF" ] || return 1
-    local p; p="$(head -n1 "$PIDF" 2>/dev/null | tr -dc '0-9')"
-    [ -n "$p" ] || return 1
-    kill -0 "$p" 2>/dev/null || { rm -f "$PIDF"; return 1; }
+    p="$(head -n1 "$PIDF" 2>/dev/null)"
+    is_own_pid "$p" || return 1
     echo "$p"
 }
 
@@ -72,15 +71,15 @@ kill_own(){
 
     log "终止进程: $pids"
     local pid
-    for pid in $pids; do kill -TERM "$pid" 2>/dev/null; done
+    for pid in $pids; do is_own_pid "$pid" && kill -TERM "$pid" 2>/dev/null; done
     local i=0 alive
     while [ "$i" -lt 10 ]; do
         alive=""
-        for pid in $pids; do kill -0 "$pid" 2>/dev/null && alive="$alive $pid"; done
+        for pid in $pids; do is_own_pid "$pid" && alive="$alive $pid"; done
         [ -z "$alive" ] && break
         sleep 1; i=$((i+1))
     done
-    for pid in $pids; do kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null; done
+    for pid in $pids; do is_own_pid "$pid" && kill -KILL "$pid" 2>/dev/null; done
     sleep 1
     rm -f "$PIDF"
     return 0
@@ -88,12 +87,6 @@ kill_own(){
 
 start_app(){
     local PORT; PORT="$(read_port)"
-
-    # 端口若被本应用的历史进程占用，先清掉（这是"启用失败/端口被占用"的根因）
-    if port_listening "$PORT" && [ -n "$(own_pids)" ]; then
-        log "端口 $PORT 被本应用残留进程占用，先清理"
-        kill_own
-    fi
 
     if running >/dev/null; then
         log "已在运行，跳过启动"

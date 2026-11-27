@@ -1,5 +1,7 @@
 # 上游两包对比分析
 
+> 历史快照：保留当时的目录和接口描述；现行入口见 [README](../../README.md) 和 [验收清单](../verification.md)。
+
 感谢恩山大佬lff520520提供思路和实现方案，原贴地址：https://www.right.com.cn/forum/thread-8499027-1-2.html
 
 > 分析时间：2026-11-24

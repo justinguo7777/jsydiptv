@@ -97,9 +97,10 @@ MAIN="$(dirname "$(readlink -f "$0")")/main"
 PID="$(head -n1 "${TRIM_PKGVAR}/app.pid" 2>/dev/null | tr -dc '0-9')"
 if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
     log "服务在运行(PID=$PID)，重启以应用新配置"
-    [ -x "$MAIN" ] && sh "$MAIN" stop >/dev/null 2>&1
-    sleep 1
-    [ -x "$MAIN" ] && sh "$MAIN" start >/dev/null 2>&1
+    if ! [ -x "$MAIN" ] || ! sh "$MAIN" stop || ! sh "$MAIN" start; then
+        echo "配置已写入，但服务重启失败，请查看服务日志。" > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
+        exit 1
+    fi
 fi
 
 exit 0

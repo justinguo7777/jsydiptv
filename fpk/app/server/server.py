@@ -15,12 +15,13 @@
 import argparse
 import concurrent.futures as cf
 import csv
-import functools
+import fcntl
 import hashlib
 import io
 import zlib
 import struct
 import http.server
+import http.client
 import json
 import os
 import random
@@ -29,8 +30,10 @@ import shutil
 import socket
 import socketserver
 import sys
+import tempfile
 import threading
 import time
+import xml.etree.ElementTree as ET
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -46,6 +49,10 @@ _SPEC_TTL = 1800
 _spec_lock = threading.Lock()
 from datetime import datetime, timedelta, timezone
 from xml.sax.saxutils import escape
+
+
+def _xml_attr(value):
+    return escape(str(value), {'"': "&quot;"})
 
 # ---------------------------------------------------------------- 常量
 
@@ -110,7 +117,7 @@ ORIG_GROUPS = [
 #     CCTV1/3/5高清臻享 → 3840x2160 真 4K
 #     CCTV2/6/8高清臻享、睛彩篮球/竞技/青少高清臻享 → 1920x1080（并非 4K）
 #   因此这里分两层：
-#     · 「真 4K」= 实测 3840x2160 或源标记明确为 4K/2160   → is_4k=True
+#     · 「真 4K」= 宽高实测达到 3840x2160 → is_4k=True；源标记只用于候选。
 #     · 「高清臻享」= 名称/清晰度名带「高清臻享」            → grp_uhd=True（进 4K 组，但不冒充真 4K）
 #   界面按 is_4k 打「4K」徽标、按真实 w/h 展示档位，避免把 1080P 谎报成 4K。
 #
@@ -158,9 +165,26 @@ PKGETC = os.environ.get("TRIM_PKGETC", os.path.join(APPDEST, "etc"))
 PKGVAR = os.environ.get("TRIM_PKGVAR", os.path.join(APPDEST, "var"))
 WWW = os.path.join(APPDEST, "www")
 DATA = os.path.join(PKGVAR, "data")
-LOGO_DIR = os.path.join(DATA, "logo")
 CONF_FILE = os.path.join(PKGETC, "config.json")
-STATE_FILE = os.path.join(DATA, "meta.json")
+
+# 老版本直接在 data/ 写文件；首代成功前继续读取旧布局，不就地迁移旧数据。
+def _output_dir():
+    pointer = os.path.join(DATA, ".current")
+    return os.path.realpath(pointer) if os.path.islink(pointer) else DATA
+
+
+def _runtime_version():
+    try:
+        with open(os.path.join(WWW, "VERSION"), encoding="utf-8") as f:
+            return f.read(64).strip() or None
+    except OSError:
+        # Source-tree launches have no build-generated VERSION; installed apps do.
+        manifest = os.path.join(os.path.dirname(APPDEST), "manifest")
+        try:
+            with open(manifest, encoding="utf-8") as f:
+                return next((line.partition("=")[2].strip() for line in f if line.startswith("version=")), None)
+        except OSError:
+            return None
 
 _lock = threading.Lock()
 _updating = {"running": False, "started": 0, "error": ""}
@@ -377,25 +401,29 @@ def _logo_tone(path):
     return "light" if (tot / n) >= 100 else "dark"
 
 
-def localize_logos(chs, base_url):
+def localize_logos(chs, base_url, logo_dir, previous_logo_dir):
     if not base_url:
         return 0
     base = base_url.rstrip("/")
-    os.makedirs(LOGO_DIR, exist_ok=True)
+    os.makedirs(logo_dir, exist_ok=True)
 
     def one(ch):
         u = ch.get("logo") or ""
         if not u:
             return False
         fn = hashlib.md5(u.encode("utf-8")).hexdigest()[:12] + ".png"
-        p = os.path.join(LOGO_DIR, fn)
+        p = os.path.join(logo_dir, fn)
         if not (os.path.exists(p) and os.path.getsize(p) > 200):
             try:
-                data = http_get_bytes(u)
-                if len(data) < 200:
-                    return False
-                with open(p, "wb") as f:
-                    f.write(data)
+                cached = os.path.join(previous_logo_dir, fn)
+                if os.path.isfile(cached) and os.path.getsize(cached) > 200:
+                    shutil.copyfile(cached, p)
+                else:
+                    data = http_get_bytes(u)
+                    if len(data) < 200:
+                        return False
+                    with open(p, "wb") as f:
+                        f.write(data)
             except Exception:
                 return False
         ch["logo_tone"] = _logo_tone(p)
@@ -546,7 +574,7 @@ def pick_uhd(res_list):
     return hit[0]
 
 
-def build_channels(ability, district="", quiet=False, group_map=None):
+def build_channels(ability, district="", quiet=False, group_map=None, epg_enable=True):
     """拉取某地市/某分组下的频道。
 
     group 的取值（关键修正）：
@@ -557,8 +585,8 @@ def build_channels(ability, district="", quiet=False, group_map=None):
     assort = ASSORT_ALL if group_map is None else str(group_map)
     if not quiet:
         log("[1/5] 拉频道表 assort=%s (%s %s) ..." % (assort, district, DNAME.get(district, "")))
-    url = ("%s/lvps/channelList?assortId=%s&serviceChannelId=&isShowNewProgram=true&abilityString=%s"
-           % (EPG_BASE, assort, ability))
+    url = ("%s/lvps/channelList?assortId=%s&serviceChannelId=&isShowNewProgram=%s&abilityString=%s"
+           % (EPG_BASE, assort, "true" if epg_enable else "false", ability))
     j = json.loads(http_get(url))
     if j.get("resultCode") != "000":
         raise RuntimeError("channelList 失败: %s" % j.get("resultMessage"))
@@ -626,29 +654,48 @@ def build_programs(channels, ability, hist_days, days, quiet=False):
             "&channelType=&relatedId=&copyrightTip=&serviceChannelId=&abilityString=%s"
             % (EPG_BASE, (today - timedelta(days=hist_days)).strftime("%Y%m%d"),
                (today + timedelta(days=days)).strftime("%Y%m%d"), ability))
-    progs, done = [], [0]
+    progs, done, failed, invalid = [], 0, 0, 0
 
     def one(ch):
         try:
-            j = json.loads(http_get(base + "&uuid=" + str(ch["uuid"])))
-        except Exception:
-            return []
-        r = []
-        for d in j.get("content") or []:
-            for p in d.get("programs") or []:
-                r.append({"uuid": ch["uuid"], "title": p.get("programName") or "",
-                          "start": int(p.get("startTime") or 0), "end": int(p.get("endTime") or 0)})
-        return r
+            j = json.loads(http_get(base + "&" + urllib.parse.urlencode({"uuid": ch["uuid"]}), timeout=12, retries=1))
+            if j.get("resultCode") not in (None, "000") or not isinstance(j.get("content"), list):
+                return [], True, 0
+        except (OSError, ValueError, AttributeError):
+            return [], True, 0
+        rows, skipped, seen = [], 0, set()
+        for day in j["content"]:
+            if not isinstance(day, dict) or not isinstance(day.get("programs"), list):
+                skipped += 1
+                continue
+            for p in day["programs"]:
+                try:
+                    title = p["programName"].strip()
+                    start, end = int(p["startTime"]), int(p["endTime"])
+                    if not title or not 0 < start < end < 2**32:
+                        raise ValueError()
+                except (TypeError, ValueError, KeyError, AttributeError, OverflowError):
+                    skipped += 1
+                    continue
+                key = (start, end, title)
+                if key not in seen:
+                    seen.add(key)
+                    rows.append({"uuid": ch["uuid"], "title": title, "start": start, "end": end})
+        return rows, False, skipped
 
     with cf.ThreadPoolExecutor(max_workers=8) as ex:
         for f in cf.as_completed([ex.submit(one, c) for c in channels]):
-            progs.extend(f.result() or [])
-            done[0] += 1
-            if not quiet and done[0] % 60 == 0:
-                log("      %d/%d" % (done[0], len(channels)))
-    progs = [p for p in progs if p["start"] and p["end"]]
-    if not quiet:
-        log("      节目 %d 条" % len(progs))
+            rows, failure, skipped = f.result()
+            progs.extend(rows)
+            failed += failure
+            invalid += skipped
+            done += 1
+            if not quiet and done % 60 == 0:
+                log("      %d/%d" % (done, len(channels)))
+    if failed or invalid or not quiet:
+        log("      节目 %d 条；请求失败 %d/%d，忽略异常记录 %d" % (len(progs), failed, done, invalid))
+    if done >= 10 and failed * 5 > done * 2:
+        raise RuntimeError("节目单请求失败超过 40%%（%d/%d），保留上一版" % (failed, done))
     return progs
 
 
@@ -697,7 +744,7 @@ def _classify(c):
          少儿 → 少儿动画；生活 → 生活纪录；广播 → 音乐广播；购物 → 购物
       4. 兜底：用频道名特征再分一次（otypes 缺失时有 12 个台），最后落「生活纪录」
     """
-    if c.get("is_4k") or c.get("grp_uhd"):
+    if c.get("is_4k") or c.get("grp_uhd") or c.get("uhd_unverified"):
         return GROUP_UHD
     if c.get("group_from_city"):
         return "地方"
@@ -773,13 +820,13 @@ def probe_uhd(chs, cdn, quiet=False):
     """
     cand = [c for c in chs
             if UHD_NAME_RE.search(c["name"] or "") or ZHENXIANG_RE.search(c["name"] or "")
-            or UHD_CODE_RE.search(c["code"] or "") or c.get("zhx")]
+            or UHD_CODE_RE.search(c["code"] or "") or c.get("grp_uhd") or c.get("zhx")]
     if not cand:
         return
+    for c in cand:
+        c["is_4k"] = False
+        c["uhd_unverified"] = True
     if _mp is None:
-        for c in cand:
-            c["is_4k"] = bool(UHD_NAME_RE.search(c["name"] or "") and "高清臻享" not in c["name"])
-            c["codec"] = ""
         return
 
     def one(c):
@@ -804,7 +851,8 @@ def probe_uhd(chs, cdn, quiet=False):
             c["codec"] = v.get("codec") or ""
             c["vprofile"] = v.get("profile") or ""
             # 真 4K 唯一判据：实测 >= 3840x2160。高清臻享若实测只有 1080P，不算真 4K。
-            c["is_4k"] = (w >= 3840 or h >= 2160)
+            c["is_4k"] = w >= 3840 and h >= 2160
+            c["uhd_unverified"] = False
             return True
         return False
 
@@ -825,10 +873,6 @@ def probe_uhd(chs, cdn, quiet=False):
                     ok += 1
                     break
                 time.sleep(1.0)
-    for c in cand:
-        if not (c.get("w") and c.get("h")):
-            # 最终仍失败：无法确认真 4K，按名称含 4K 兜底，高清臻享按 1080P 处理
-            c["is_4k"] = bool(UHD_NAME_RE.search(c["name"] or "")) and not c.get("zhx")
     if not quiet:
         n4k = sum(1 for c in cand if c.get("is_4k"))
         nzx = sum(1 for c in cand if c.get("zhx"))
@@ -880,7 +924,7 @@ def _dedup_4k(chs):
         log("      4K 组去重：移除 %d 条同流重复 %s" % (removed, dropped))
 
 
-def collect(districts, days, hist_days=7):
+def collect(districts, days, hist_days=7, epg_enable=True):
     """拉全量频道 + 节目单，并按**上游原版分组**归类。
 
     分组链路（回答「分类名是否完全来自上游」）：
@@ -917,8 +961,8 @@ def collect(districts, days, hist_days=7):
             local_lists[code] = fetch_members(load_ability(code), "120")
         except Exception:      # noqa: BLE001
             pass
-    common = (set.intersection(*[set(v) for v in local_lists.values() if v])
-              if len(local_lists) > 1 else set())
+    valid_local = [set(v) for v in local_lists.values() if v]
+    common = set.intersection(*valid_local) if len(valid_local) > 1 else set()
     for code, uuids in local_lists.items():
         for u in uuids:
             if u not in common:
@@ -954,7 +998,7 @@ def collect(districts, days, hist_days=7):
     chs, seen, prs_list = [], set(), []
     for d in districts:
         ab = load_ability(d)
-        sub = build_channels(ab, d)
+        sub = build_channels(ab, d, epg_enable=epg_enable)
         fresh = []
         for c in sub:
             if c["uuid"] in seen:
@@ -962,7 +1006,7 @@ def collect(districts, days, hist_days=7):
             seen.add(c["uuid"])
             fresh.append(c)
             chs.append(c)
-        if fresh:
+        if fresh and epg_enable:
             prs_list.extend(build_programs(fresh, ab, hist_days, days, quiet=True))
 
     # ④ 归类：先记录上游原分组（供二级展示），地方台补 district，最后统一交 _classify
@@ -1061,7 +1105,7 @@ def gkey(ch):
 
 # ---------------------------------------------------------------- 输出生成
 
-def write_outputs(out, cdn, channels, programs, backup_days, days, base_url="", minimal=False):
+def write_outputs(out, cdn, channels, programs, backup_days, days, base_url="", minimal=False, epg_enable=True):
     os.makedirs(out, exist_ok=True)
     now = datetime.now(TZ8)
     stamp = now.strftime("%Y-%m-%d %H:%M:%S")
@@ -1092,10 +1136,12 @@ def write_outputs(out, cdn, channels, programs, backup_days, days, base_url="", 
         return DNAME.get(ch["district"], "") if ch["group"] == "地方" else "全省"
 
     def glabel(ch):
-        return ch["group"] if ch["group"] != "地方" else "地方-%s" % DNAME.get(ch["district"], "")
+        return ch["group"] if ch["group"] != "地方" else "地方-%s" % DNAME.get(ch["district"], "未定地市")
 
     fit = sorted(channels, key=gkey)
     base = (base_url or "").rstrip("/")
+    tvg = (' url-tvg="%s/epg.xml" x-tvg-url="%s/epg.xml"' % (base, base)) if base and epg_enable else ""
+    epg_links = {"epg": [base + "/epg.xml"], "epg_url": base + "/epg.xml"} if epg_enable else {}
 
     def logo_of(ch):
         """给播放器/EPG 用的台标地址：必须是绝对 URL。
@@ -1132,6 +1178,7 @@ def write_outputs(out, cdn, channels, programs, backup_days, days, base_url="", 
             # codec    视频编码 H.264 / H.265（H.265 在浏览器里播不了，界面要提示降档）
             # alts     该频道的其它清晰度档，4K 播不动时可直接切 1080P
             "is_4k": bool(ch.get("is_4k")),
+            "uhd_unverified": bool(ch.get("uhd_unverified")),
             "grp_uhd": bool(ch.get("grp_uhd")),
             "zhx": bool(ch.get("zhx")),
             "w": ch.get("w"), "h": ch.get("h"),
@@ -1150,7 +1197,6 @@ def write_outputs(out, cdn, channels, programs, backup_days, days, base_url="", 
     if minimal:
         # 精简模式也保留一份 Kodi 专用文件（回看变量语法不同），
         # 否则界面上的「Kodi 接入」标签会指向不存在的文件。
-        tvg = (' url-tvg="%s/epg.xml" x-tvg-url="%s/epg.xml"' % (base, base)) if base else ""
 
         # 默认 default 模式：本源的「回看」是独立路径 /gitv/lookback/，
         # 与直播路径 /gitv/live1/ 不同段，append（往直播URL追加参数）根本拼不出回看地址。
@@ -1180,67 +1226,31 @@ def write_outputs(out, cdn, channels, programs, backup_days, days, base_url="", 
 
         x = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="jsydiptv">']
         for ch in channels:
-            icon = '<icon src="%s"/>' % escape(logo_of(ch)) if ch.get("logo") else ""
+            icon = '<icon src="%s"/>' % _xml_attr(logo_of(ch)) if ch.get("logo") else ""
             x.append('  <channel id="%s"><display-name>%s</display-name>%s</channel>'
-                     % (escape(str(ch["uuid"])), escape(ch["name"]), icon))
+                     % (_xml_attr(ch["uuid"]), escape(ch["name"]), icon))
         for p in programs:
             if p["end"] <= epg_lo or p["start"] >= epg_hi:
                 continue
             s = datetime.fromtimestamp(p["start"], TZ8).strftime("%Y%m%d%H%M%S") + " +0800"
             e = datetime.fromtimestamp(p["end"], TZ8).strftime("%Y%m%d%H%M%S") + " +0800"
             x.append('  <programme start="%s" stop="%s" channel="%s"><title lang="zh">%s</title></programme>'
-                     % (s, e, escape(str(p["uuid"])), escape(p["title"])))
+                     % (s, e, _xml_attr(p["uuid"]), escape(p["title"])))
         x.append("</tv>")
         write("epg.xml", "\n".join(x))
 
         write("tvbox.json", json.dumps({
             "lives": [{"name": "江苏移动IPTV", "type": 0,
                        "url": base + "/iptv.m3u8", "playerType": 1}],
-            "epg": [base + "/epg.xml"],
-            "epg_url": base + "/epg.xml",
+            **epg_links,
         }, ensure_ascii=False, indent=2))
 
-        # ---- FongMi TV 专用配置（与 TVBox 并存，互不影响） ----
-        # FongMi 5.x 的节目单走「按频道+按天」的 JSON 接口，不读 XMLTV；
-        # 因此这里额外产出一套 epg/<uuid>/<YYYY-MM-DD>.json。
-        write("fongmi.json", json.dumps({
-            "notice": "江苏移动IPTV · FongMi 专版（%d 频道 / 回看 %d 天）"
-                      % (len(channels), backup_days),
-            "sites": [],
-            "lives": [{
-                "group": "江苏移动IPTV", "name": "直播+回看", "type": 0,
-                "url": base + "/fongmi.m3u", "playerType": 1,
-                "ua": STREAM_UA,
-                "epg": base + "/epg/{id}/{date}.json",
-            }],
-            "epg": [base + "/epg/{id}/{date}.json"],
-        }, ensure_ascii=False, indent=2))
-
-        # 按天 JSON 节目单：只生成「今天」，FongMi 面板只渲染当天
-        day0 = datetime.now(TZ8).replace(hour=0, minute=0, second=0, microsecond=0)
-        lo, hi = int(day0.timestamp()), int((day0 + timedelta(days=1)).timestamp())
-        bucket = {}
-        for pg in programs:
-            if pg["end"] <= lo or pg["start"] >= hi:
-                continue
-            bucket.setdefault(pg["uuid"], {})[(pg["start"], pg["end"], pg["title"])] = True
-        daystr = day0.strftime("%Y-%m-%d")
-        epgd = os.path.join(out, "epg")
-        for uid, items in bucket.items():
-            d = os.path.join(epgd, str(uid))
-            os.makedirs(d, exist_ok=True)
-            data = [{"start": datetime.fromtimestamp(st, TZ8).strftime("%H:%M"),
-                     "end": datetime.fromtimestamp(en, TZ8).strftime("%H:%M"),
-                     "title": t}
-                    for (st, en, t) in sorted(items.keys())]
-            with open(os.path.join(d, daystr + ".json"), "w", encoding="utf-8", newline="\n") as f:
-                f.write(json.dumps({"date": daystr, "epg_data": data},
-                                   ensure_ascii=False, separators=(",", ":")))
+        write_fongmi_outputs(out, base, channels, programs, backup_days, day0, days, epg_enable)
         return
 
     # ---- 完整模式 ----
     for _s, fname, va, vb in STYLES:
-        lines = ["#EXTM3U",
+        lines = ["#EXTM3U" + tvg,
                  "# 江苏移动 IPTV 直播源｜更新: %s｜节目单: 前5天~明天" % stamp,
                  "# 全江苏 %d 频道｜回看 %d 个" % (len(channels), sum(1 for c in channels if c["back"] > 0))]
         for ch in fit:
@@ -1254,14 +1264,10 @@ def write_outputs(out, cdn, channels, programs, backup_days, days, base_url="", 
         write(fname, "\n".join(lines))
 
     # 固定入口
-    write("iptv.m3u8", open(os.path.join(out, "直播源.m3u"), encoding="utf-8").read())
-    write("iptv_fongmi.m3u8", open(os.path.join(out, "直播源_tvbox_fongmi.m3u"), encoding="utf-8").read())
-    # ASCII 别名真实落盘（电视端播放器对裸中文 URL 支持不稳，这里提供等价文件）
-    for alias, src in ALIASES.items():
-        p = os.path.join(out, src)
-        if os.path.isfile(p):
-            with open(p, encoding="utf-8") as f:
-                write(alias, f.read())
+    for alias, src in {"iptv.m3u8": "直播源.m3u", "iptv_fongmi.m3u8": "直播源_tvbox_fongmi.m3u"}.items():
+        shutil.copyfile(os.path.join(out, src), os.path.join(out, alias))
+
+    write_fongmi_outputs(out, base, channels, programs, backup_days, day0, days, epg_enable)
 
     txt, cur = [], None
     for ch in fit:
@@ -1287,19 +1293,19 @@ def write_outputs(out, cdn, channels, programs, backup_days, days, base_url="", 
 
     x = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="jsydiptv">']
     for ch in channels:
-        icon = '<icon src="%s"/>' % escape(logo_of(ch)) if ch.get("logo") else ""
+        icon = '<icon src="%s"/>' % _xml_attr(logo_of(ch)) if ch.get("logo") else ""
         x.append('  <channel id="%s"><display-name>%s</display-name>%s</channel>'
-                 % (escape(str(ch["uuid"])), escape(ch["name"]), icon))
+                 % (_xml_attr(ch["uuid"]), escape(ch["name"]), icon))
     for p in programs:
         if p["end"] <= epg_lo or p["start"] >= epg_hi:
             continue
         s = datetime.fromtimestamp(p["start"], TZ8).strftime("%Y%m%d%H%M%S") + " +0800"
         e = datetime.fromtimestamp(p["end"], TZ8).strftime("%Y%m%d%H%M%S") + " +0800"
         x.append('  <programme start="%s" stop="%s" channel="%s"><title lang="zh">%s</title></programme>'
-                 % (s, e, escape(str(p["uuid"])), escape(p["title"])))
+                 % (s, e, _xml_attr(p["uuid"]), escape(p["title"])))
     x.append("</tv>")
     write("epg.xml", "\n".join(x))
-    write("EPG.xml", open(os.path.join(out, "epg.xml"), encoding="utf-8").read())
+    shutil.copyfile(os.path.join(out, "epg.xml"), os.path.join(out, "EPG.xml"))
 
     with open(os.path.join(out, "频道清单.csv.tmp"), "w", encoding="utf-8-sig", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["num", "name", "group", "district", "uuid", "code", "cp", "back", "mc"])
@@ -1353,22 +1359,65 @@ def write_outputs(out, cdn, channels, programs, backup_days, days, base_url="", 
                                 datetime.fromtimestamp(p["end"], TZ8).strftime("%Y%m%d%H%M%S"))])
     os.replace(os.path.join(out, "回看节目单.csv.tmp"), os.path.join(out, "回看节目单.csv"))
 
+    # 此处全部中文源文件已落盘，再生成固定的 ASCII 入口。
+    for alias, src in ALIASES.items():
+        shutil.copyfile(os.path.join(out, src), os.path.join(out, alias))
+
     write("tvbox.json", json.dumps({
         "lives": [
             {"name": "江苏移动·回看版", "type": 0, "url": base + "/iptv.m3u8", "playerType": 1},
             {"name": "江苏移动·纯直播", "type": 1, "url": base + "/live.txt", "playerType": 1},
         ],
-        "epg": [base + "/epg.xml"],
-        "epg_url": base + "/epg.xml",
+        **epg_links,
     }, ensure_ascii=False, indent=2))
+
+
+def write_fongmi_outputs(out, base, channels, programs, backup_days, day0, days, epg_enable):
+    """两种模式共享。预生成今天及配置范围内的未来日期，避免午夜到更新之间断档。"""
+    live = {"group": "江苏移动IPTV", "name": "直播+回看", "type": 0,
+            "url": base + "/fongmi.m3u", "playerType": 1, "ua": STREAM_UA}
+    config = {"notice": "江苏移动IPTV · FongMi（%d 频道 / 回看 %d 天）" % (len(channels), backup_days),
+              "sites": [], "lives": [live]}
+    if epg_enable:
+        live["epg"] = base + "/epg/{id}/{date}.json"
+        config["epg"] = [live["epg"]]
+    with open(os.path.join(out, "fongmi.json"), "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+    if not epg_enable:
+        return
+    lo = day0.date()
+    hi = lo + timedelta(days=days)
+    buckets = {}
+    for pg in programs:
+        uid = str(pg["uuid"])
+        if not _valid_epg_uid(uid) or pg["end"] <= pg["start"]:
+            continue
+        st = datetime.fromtimestamp(pg["start"], TZ8)
+        en = datetime.fromtimestamp(pg["end"], TZ8)
+        d = max(lo, st.date())
+        last = min(hi, datetime.fromtimestamp(pg["end"] - 1, TZ8).date())
+        while d <= last:
+            buckets.setdefault((uid, d.isoformat()), set()).add((st, en, pg["title"]))
+            d += timedelta(days=1)
+    for (uid, day), items in buckets.items():
+        folder = os.path.join(out, "epg", uid)
+        os.makedirs(folder, exist_ok=True)
+        entries = [{"start": st.strftime("%H:%M"), "end": en.strftime("%H:%M"), "title": title}
+                   for st, en, title in sorted(items)]
+        with open(os.path.join(folder, day + ".json"), "w", encoding="utf-8") as f:
+            json.dump({"date": day, "epg_data": entries}, f, ensure_ascii=False, separators=(",", ":"))
+
+
+def _valid_epg_uid(uid):
+    return uid not in (".", "..") and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", uid) is not None
 
 
 # ---------------------------------------------------------------- 方案二：上游原版清单
 #
 # 与主产物完全独立、互不影响：
 #   · 主产物（iptv.m3u8 等）走本应用的二次分类（4K/央视/卫视/江苏/地方/6 内容组）；
-#   · 原版产物（orig.m3u8 / orig_epg.xml）**完全照搬上游 getOpenNewAssortment
-#     的 11 个分组**，组名、台号、台名全部用上游原样，不做任何重排/改名/拆分。
+#   · 原版产物（orig.m3u8 / orig_epg.xml）使用上游 11 组及归属重建；
+#     台名、台号与排序沿用本应用当前数据。
 #
 # 为什么单独出一套而不是替换：「本地」组把江苏省级台和 13 地市县区台混在 67 台里，
 # 「专业频道」19 台内容完全杂糅，「超高清」里还混着实测 1080P 的高清臻享 ——
@@ -1393,8 +1442,6 @@ def write_orig_outputs(out, cdn, channels, programs, backup_days, base_url=""):
         with open(tmp, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
         os.replace(tmp, os.path.join(out, name))
-
-    by_uuid = {c["uuid"]: c for c in channels}
 
     def live_of(ch):
         return "%s/%s/live1/%s/%s/1.m3u8" % (cdn, ch["cp"], ch["code"], ch["code"])
@@ -1429,8 +1476,8 @@ def write_orig_outputs(out, cdn, channels, programs, backup_days, base_url=""):
         grouped[gname] = hit
 
     lines = ["#EXTM3U",
-             "# 江苏移动 IPTV · 原版节目清单（完全照搬机顶盒电视墙分组）｜更新: %s" % stamp,
-             "# 分组与台号、台名均取自上游 getOpenNewAssortment，未做任何本地化重排",
+             "# 江苏移动 IPTV · 原版分组清单（按机顶盒电视墙分组重建）｜更新: %s" % stamp,
+             "# 分组及归属取自上游；台名、台号和排序使用当前频道数据",
              "# 同一频道可能出现在多个分组（与电视墙一致）"]
     total = 0
     for gname, chs_g in grouped.items():
@@ -1451,22 +1498,26 @@ def write_orig_outputs(out, cdn, channels, programs, backup_days, base_url=""):
     used = {c["uuid"] for g in grouped.values() for c in g}
     x = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="jsydiptv-orig">']
     for ch in [c for c in channels if c["uuid"] in used]:
-        icon = '<icon src="%s"/>' % escape(logo_of(ch)) if ch.get("logo") else ""
+        icon = '<icon src="%s"/>' % _xml_attr(logo_of(ch)) if ch.get("logo") else ""
         x.append('  <channel id="%s"><display-name>%s</display-name>%s</channel>'
-                 % (escape(str(ch["uuid"])), escape(oname(ch)), icon))
+                 % (_xml_attr(ch["uuid"]), escape(oname(ch)), icon))
     for p in programs:
         if p["uuid"] not in used or p["end"] <= epg_lo or p["start"] >= epg_hi:
             continue
         s = datetime.fromtimestamp(p["start"], TZ8).strftime("%Y%m%d%H%M%S") + " +0800"
         e = datetime.fromtimestamp(p["end"], TZ8).strftime("%Y%m%d%H%M%S") + " +0800"
         x.append('  <programme start="%s" stop="%s" channel="%s"><title lang="zh">%s</title></programme>'
-                 % (s, e, escape(str(p["uuid"])), escape(p["title"])))
+                 % (s, e, _xml_attr(p["uuid"]), escape(p["title"])))
     x.append("</tv>")
     write("orig_epg.xml", "\n".join(x))
 
     # 机器可读清单（界面上展示「原版分组与频道」用）
+    programs_by_uuid = {}
+    for p in programs:
+        programs_by_uuid.setdefault(p["uuid"], []).append(p)
+
     def ch_obj(ch):
-        ps = [p for p in programs if p["uuid"] == ch["uuid"]]
+        ps = programs_by_uuid.get(ch["uuid"], [])
         cur = nxt = None
         for p in ps:
             if p["start"] <= nowts < p["end"]:
@@ -1481,7 +1532,7 @@ def write_orig_outputs(out, cdn, channels, programs, backup_days, base_url=""):
 
     write("orig.json", json.dumps({
         "updated": stamp,
-        "note": "完全照搬上游 getOpenNewAssortment 的 11 个分组，台名/台号均为上游原样",
+        "note": "使用上游 11 组及归属重建；台名、台号与排序使用当前频道数据",
         "total_entries": total,
         "unique_channels": len(used),
         "groups": [{"name": gname, "assortId": aid, "count": len(grouped[gname]),
@@ -1501,7 +1552,7 @@ def probe_live(url, timeout=8):
         return False
 
 
-def validate(out, channels, cdn, minimal=False):
+def validate_live(channels, cdn):
     rnd = random.Random(2026)
     picks, seen = [], {}
     for ch in channels:
@@ -1509,7 +1560,9 @@ def validate(out, channels, cdn, minimal=False):
         if seen.get(k, 0) < 4:
             seen[k] = seen.get(k, 0) + 1
             picks.append(ch)
-    sample = picks + rnd.sample(channels, min(10, len(channels)))
+    sampled = {ch["uuid"] for ch in picks}
+    remaining = [ch for ch in channels if ch["uuid"] not in sampled]
+    sample = picks + rnd.sample(remaining, min(10, len(remaining)))
 
     def one(ch):
         return probe_live("%s/%s/live1/%s/%s/1.m3u8" % (cdn, ch["cp"], ch["code"], ch["code"]))
@@ -1517,59 +1570,65 @@ def validate(out, channels, cdn, minimal=False):
     with cf.ThreadPoolExecutor(max_workers=10) as ex:
         live_ok = sum(1 for r in ex.map(one, sample) if r)
 
-    leaks = []
-    for fn in os.listdir(out):
-        if not fn.endswith((".m3u", ".m3u8", ".txt", ".json", ".csv", ".md", ".xml")):
-            continue
-        txt = open(os.path.join(out, fn), encoding="utf-8", errors="ignore").read()
-        for pat, name in PRIVACY_PATTERNS:
-            if re.search(pat, txt):
-                leaks.append("%s: %s" % (fn, name))
-    ok = live_ok >= max(3, int(len(sample) * 0.8)) and not leaks
-    log("[4/5] 自检 直播 %d/%d，隐私 %s" % (live_ok, len(sample), "干净" if not leaks else leaks))
-    return ok, {"live": "%d/%d" % (live_ok, len(sample)),
-                "sample": len(sample),
-                "privacy": "clean" if not leaks else ";".join(leaks)}
+    detail = {"live": "%d/%d" % (live_ok, len(sample)), "sample": len(sample)}
+    return live_ok >= max(1, (len(sample) * 8 + 9) // 10), detail
 
 
-def _merge_move(src, dst):
-    """把 src 移到 dst；若 dst 已存在目录则递归合并（epg/<uuid>/ 这种嵌套结构）。"""
-    if os.path.isdir(src) and os.path.isdir(dst):
-        for item in os.listdir(src):
-            _merge_move(os.path.join(src, item), os.path.join(dst, item))
-        try:
-            os.rmdir(src)
-        except OSError:
-            pass
-        return
-    if os.path.isdir(dst):
-        shutil.rmtree(dst, ignore_errors=True)
-    os.replace(src, dst)
+_CORE_OUTPUTS = {"iptv.m3u8", "kodi.m3u", "fongmi.m3u", "fongmi.json", "epg.xml", "tvbox.json",
+                 "meta.json", "4k.json", "channels.json", "programs.json", "orig.m3u8", "orig_epg.xml", "orig.json"}
 
 
-def publish(build, out, keep=None):
-    # epg/ 是「按天 JSON」目录：每次更新必须整体替换，
-    # 否则昨天/已下线频道的旧文件会一直堆着，客户端可能读到过期节目单。
-    b_epg = os.path.join(build, "epg")
-    if os.path.isdir(b_epg):
-        o_epg = os.path.join(out, "epg")
-        shutil.rmtree(o_epg, ignore_errors=True)
-    for fn in os.listdir(build):
-        _merge_move(os.path.join(build, fn), os.path.join(out, fn))
-    shutil.rmtree(build, ignore_errors=True)
-    if not keep:
-        return
-    keep_cf = {k.casefold() for k in keep}
-    for fn in os.listdir(out):
-        p = os.path.join(out, fn)
-        if os.path.isfile(p) and fn.casefold() not in keep_cf:
-            try:
-                os.remove(p)
-            except OSError:
-                pass
-        # 目录（如 epg/）只在该代模式下不需要时清理，避免误删
-        elif os.path.isdir(p) and fn.casefold() not in keep_cf and fn != "logo":
-            shutil.rmtree(p, ignore_errors=True)
+def validate_generation(build, minimal, epg_enable):
+    """校验整代产物，含元数据和嵌套节目单。不将命中的内容写回日志。"""
+    required = _CORE_OUTPUTS if minimal else _CORE_OUTPUTS | {"直播源.txt", "直播源.m3u", "频道清单.csv"}
+    for name in sorted(required):
+        if not os.path.isfile(os.path.join(build, name)):
+            raise RuntimeError("产物不完整: " + name)
+    for name in ("iptv.m3u8", "kodi.m3u", "fongmi.m3u", "orig.m3u8"):
+        with open(os.path.join(build, name), encoding="utf-8") as f:
+            if not f.readline().startswith("#EXTM3U") or not any(line.startswith("#EXTINF:") for line in f):
+                raise RuntimeError("直播清单没有有效频道: " + name)
+    for name in ("epg.xml", "orig_epg.xml"):
+        xml = ET.parse(os.path.join(build, name)).getroot()
+        if xml.tag != "tv" or (not epg_enable and xml.find("programme") is not None):
+            raise RuntimeError("XMLTV 与 EPG 配置不符: " + name)
+    if epg_enable and (_count_epg(build) == 0 or not os.path.isdir(os.path.join(build, "epg"))):
+        raise RuntimeError("EPG 已启用，但没有可用节目数据")
+    for folder, _, files in os.walk(build):
+        for fn in files:
+            if not fn.endswith((".m3u", ".m3u8", ".txt", ".json", ".csv", ".md", ".xml")):
+                continue
+            path = os.path.join(folder, fn)
+            with open(path, encoding="utf-8-sig") as f:
+                text = f.read()
+            if fn.endswith(".json"):
+                json.loads(text)
+            for pat, name in PRIVACY_PATTERNS:
+                if re.search(pat, text):
+                    raise RuntimeError("隐私检查未通过: %s (%s)" % (os.path.relpath(path, build), name))
+
+
+def publish(build):
+    """仅一次原子替换对读者可见；旧路径与上一代不会被此操作覆盖。"""
+    link = build + ".link"
+    try:
+        os.symlink(os.path.relpath(build, DATA), link)
+        os.replace(link, os.path.join(DATA, ".current"))
+    finally:
+        if os.path.islink(link):
+            os.unlink(link)
+
+
+def _prune_generations(root, protected):
+    # 给已绑定旧代的 HTTP 请求留足窗口；上一次成功产物始终保留。
+    cutoff = time.time() - 7 * 86400
+    try:
+        for entry in os.scandir(root):
+            if (entry.name.startswith("gen-") and entry.path not in protected
+                    and entry.is_dir(follow_symlinks=False) and entry.stat().st_mtime < cutoff):
+                shutil.rmtree(entry.path)
+    except OSError as e:
+        log("[维护] 历史产物清理未完成:", e)
 
 
 def _count_epg(build):
@@ -1587,90 +1646,114 @@ def _count_epg(build):
 def run_once(cfg, base_url=""):
     districts = [c for c, _ in JIANGSU] if str(cfg["district"]).lower() == "all" \
         else [x.strip() for x in str(cfg["district"]).split(",") if x.strip()]
-    os.makedirs(DATA, exist_ok=True)
-    _DROPPED_UUIDS.clear()
-    chs, prs = collect(districts, cfg["days"], cfg["history_days"])
-    if not chs:
-        raise RuntimeError("一个频道都没拿到，保留上一版")
-    if cfg["localize_logo"]:
-        n = localize_logos(chs, base_url)
-        log("[台标] 本地化 %d/%d" % (n, len(chs)))
-    build = os.path.join(DATA, ".build")
-    shutil.rmtree(build, ignore_errors=True)
+    root = os.path.join(DATA, ".generations")
+    os.makedirs(root, exist_ok=True)
+    epg_enable = cfg.get("epg_enable", True)
     cache = os.path.join(PKGVAR, "cdn_host.txt")
     last = None
-    minimal = cfg["output_mode"] == "minimal"
-    uhd_probed = False
-    for h in ordered_hosts(cache):
-        cdn = "http://" + h
-        # 4K 归类必须在「已知可用 CDN」上实测，否则拉不到切片全是误判。
-        # 只做一次，后续 CDN 轮换沿用同一结论（同一路源的分辨率不会变）。
-        if not uhd_probed:
-            log("[2.5/5] 实测 4K 频道真实分辨率 ...")
-            probe_uhd(chs, cdn)
-            _reclassify_uhd(chs)
-            # 4K 组去重后，把被删频道的节目一并剔除，避免 epg.xml 出现孤儿 programme
-            if _DROPPED_UUIDS:
-                before = len(prs)
-                prs = [p for p in prs if p["uuid"] not in _DROPPED_UUIDS]
-                log("      已剔除去重频道的节目 %d 条" % (before - len(prs)))
-            uhd_probed = True
-        log("[3/5] 用 CDN %s 生成并自检 ..." % h)
-        write_outputs(build, cdn, chs, prs, cfg["backup_days"], cfg["days"], base_url, minimal)
-        # 方案二：上游原版清单（独立产物，不受 minimal / 二次分类影响）
+    # 同一数据目录不允许后台服务和 CLI --once 同时更新。
+    with open(os.path.join(DATA, ".update.lock"), "a", encoding="utf-8") as lock:
         try:
-            _ot, _ou = write_orig_outputs(build, cdn, chs, prs, cfg["backup_days"], base_url)
-            log("      原版清单：%d 条 / %d 个频道（上游 11 组原样）" % (_ot, _ou))
-        except Exception as e:      # noqa: BLE001
-            log("      ⚠ 原版清单生成失败（不影响主产物）: %s" % e)
-        ok, detail = validate(build, chs, cdn, minimal)
-        if ok:
-            meta = {
-                "updated": datetime.now(TZ8).strftime("%Y-%m-%d %H:%M:%S"),
-                "cdn": cdn, "channels": len(chs),
-                "with_catchup": sum(1 for ch in chs if ch["back"] > 0),
-                "programs": len(prs), "backup_days": cfg["backup_days"],
-                "epg_programs": _count_epg(build), "status": "ok", "check": detail,
-                "uhd": sum(1 for ch in chs if ch.get("group") == GROUP_UHD),
-                "uhd_real": sum(1 for ch in chs if ch.get("is_4k")),
-                "uhd_h265": sum(1 for ch in chs if ch.get("group") == GROUP_UHD and "265" in (ch.get("codec") or "")),
-                # 孤儿频道（上游未归任何分组，靠名称兜底）
-                "orphans": len(ORPHANS),
-                "orphan_list": [dict(v) for v in ORPHANS.values()],
-            }
-            with open(os.path.join(build, "meta.json"), "w", encoding="utf-8", newline="\n") as f:
-                json.dump(meta, f, ensure_ascii=False, indent=2)
-            # 「4k.json」是给界面与外部播放器直接用的 4K 清单，始终产出
-            with open(os.path.join(build, "4k.json"), "w", encoding="utf-8", newline="\n") as f:
-                # 4K 组清单：包含真 4K 与「高清臻享」（后者用 real_4k=false 标注真实分辨率）
-                k4 = sorted([ch for ch in chs if ch.get("group") == GROUP_UHD], key=gkey)
-                json.dump({"updated": meta["updated"], "cdn": cdn,
-                           "note": "real_4k=true 为实测 3840x2160；高清臻享中部分为 1080P，见 w/h",
-                           "channels": [{"name": ch["name"], "num": ch["num"], "uuid": ch["uuid"],
-                                         "real_4k": bool(ch.get("is_4k")), "zhx": bool(ch.get("zhx")),
-                                         "codec": ch.get("codec") or "",
-                                         "w": ch.get("w"), "h": ch.get("h"),
-                                         "live": "%s/%s/live1/%s/%s/1.m3u8"
-                                                 % (cdn, ch["cp"], ch["code"], ch["code"])}
-                                        for ch in k4]},
-                          f, ensure_ascii=False, indent=2)
-            keep = ({"iptv.m3u8", "kodi.m3u", "fongmi.m3u", "fongmi.json",
-                     "epg.xml", "tvbox.json", "meta.json", "4k.json",
-                     "channels.json", "programs.json",
-                     "orig.m3u8", "orig_epg.xml", "orig.json",
-                     "epg"} if minimal else None)
-            publish(build, DATA, keep)
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError("此数据目录已有更新在进行") from None
+        previous = _output_dir()
+        _DROPPED_UUIDS.clear()
+        chs, prs = collect(districts, cfg["days"], cfg["history_days"], epg_enable=epg_enable)
+        if not chs:
+            raise RuntimeError("一个频道都没拿到，保留上一版")
+        for h in ordered_hosts(cache):
+            cdn = "http://" + h
+            ok, detail = validate_live(chs, cdn)
+            log("[3/5] CDN %s 直播清单抽检 %s" % (h, detail["live"]))
+            if not ok:
+                last = detail
+                continue
+            build = tempfile.mkdtemp(prefix="gen-", dir=root)
+            published = False
+            try:
+                meta = _prepare_generation(build, previous, cfg, base_url, cdn, chs, prs, detail, epg_enable)
+                publish(build)
+                published = True
+            finally:
+                if not published and _output_dir() != os.path.realpath(build):
+                    shutil.rmtree(build, ignore_errors=True)
             try:
                 with open(cache, "w", encoding="utf-8") as f:
                     f.write(h)
-            except Exception:
+            except OSError:
                 pass
-            log("[5/5] 发布完成 -> %s（%s）" % (DATA, detail))
+            _prune_generations(root, {previous, build})
+            log("[5/5] 发布完成 -> %s（%s）" % (meta["generation"], detail))
             return meta
-        last = detail
-        log("      CDN %s 未通过自检（%s），换下一个" % (h, detail))
-    shutil.rmtree(build, ignore_errors=True)
     raise RuntimeError("所有 CDN 均未通过自检（最后: %s），保留上一版" % last)
+
+
+def _guard_epg_coverage(previous, channels, programs):
+    """Compare like-for-like channel coverage; don't assume all channels carry a guide."""
+    try:
+        with open(os.path.join(previous, "programs.json"), encoding="utf-8") as f:
+            existing = json.load(f)
+    except (OSError, ValueError):
+        return
+    if not isinstance(existing, dict):
+        return
+    baseline = {str(c["uuid"]) for c in channels if existing.get(str(c["uuid"]))}
+    actual = {str(row["uuid"]) for row in programs}
+    covered = len(baseline & actual)
+    if len(baseline) >= 10 and covered * 5 < len(baseline) * 3:
+        raise RuntimeError("节目单覆盖下降（原有 %d 台仅剩 %d 台），保留上一版" % (len(baseline), covered))
+
+
+def _prepare_generation(build, previous, cfg, base_url, cdn, chs, prs, detail, epg_enable):
+    prs = [p for p in prs if p["uuid"] not in _DROPPED_UUIDS] if epg_enable else []
+    if epg_enable:
+        _guard_epg_coverage(previous, chs, prs)
+    if cfg["localize_logo"]:
+        n = localize_logos(chs, base_url, os.path.join(build, "logo"), os.path.join(previous, "logo"))
+        log("[台标] 本地化 %d/%d" % (n, len(chs)))
+    log("[3/5] 实测高画质频道分辨率 ...")
+    probe_uhd(chs, cdn)
+    _reclassify_uhd(chs)
+    minimal = cfg["output_mode"] == "minimal"
+    write_outputs(build, cdn, chs, prs, cfg["backup_days"], cfg["days"], base_url, minimal, epg_enable)
+    total, unique = write_orig_outputs(build, cdn, chs, prs, cfg["backup_days"], base_url)
+    log("      原版分组清单：%d 条 / %d 个频道" % (total, unique))
+    detail = dict(detail, privacy="clean")  # 只有后续整代检查通过才会发布这份元数据
+    meta = {
+        "generation": os.path.basename(build), "epg_enabled": epg_enable,
+        "output_mode": cfg["output_mode"], "updated": datetime.now(TZ8).strftime("%Y-%m-%d %H:%M:%S"),
+        "cdn": cdn, "channels": len(chs),
+        "with_catchup": sum(1 for ch in chs if ch["back"] > 0),
+        "programs": len(prs), "backup_days": cfg["backup_days"],
+        "epg_programs": _count_epg(build), "status": "ok", "check": detail,
+        "uhd": sum(1 for ch in chs if ch.get("group") == GROUP_UHD),
+        "uhd_real": sum(1 for ch in chs if ch.get("is_4k")),
+        "uhd_h265": sum(1 for ch in chs if ch.get("group") == GROUP_UHD and "265" in (ch.get("codec") or "")),
+        # 孤儿频道（上游未归任何分组，靠名称兜底）
+        "orphans": len(ORPHANS),
+        "orphan_list": [dict(v) for v in ORPHANS.values()],
+    }
+    with open(os.path.join(build, "meta.json"), "w", encoding="utf-8", newline="\n") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+    # 「4k.json」是给界面与外部播放器直接用的 4K 清单，始终产出
+    with open(os.path.join(build, "4k.json"), "w", encoding="utf-8", newline="\n") as f:
+        # 4K 组清单：包含真 4K 与「高清臻享」（后者用 real_4k=false 标注真实分辨率）
+        k4 = sorted([ch for ch in chs if ch.get("group") == GROUP_UHD], key=gkey)
+        json.dump({"updated": meta["updated"], "cdn": cdn,
+                   "note": "real_4k=true 为实测 3840x2160；高清臻享中部分为 1080P，见 w/h",
+                   "channels": [{"name": ch["name"], "num": ch["num"], "uuid": ch["uuid"],
+                                 "real_4k": bool(ch.get("is_4k")),
+                                 "unverified": bool(ch.get("uhd_unverified")), "zhx": bool(ch.get("zhx")),
+                                 "codec": ch.get("codec") or "",
+                                 "w": ch.get("w"), "h": ch.get("h"),
+                                 "live": "%s/%s/live1/%s/%s/1.m3u8"
+                                         % (cdn, ch["cp"], ch["code"], ch["code"])}
+                                for ch in k4]},
+                  f, ensure_ascii=False, indent=2)
+    validate_generation(build, minimal, epg_enable)
+    log("[4/5] 整代文件及隐私检查通过")
+    return meta
 
 
 def do_update(cfg, base_url, reason="manual"):
@@ -1769,50 +1852,17 @@ def _is_media_host(host):
     return False
 
 
-def _fetch(url, timeout=12, start=0, end=None, stop_at=None):
-    """取流。支持 Range 与「读到某字节就停」，4K 切片动辄 20~45MB，不能整段读完再回写。
+def _fetch(url, timeout=12, range_header=""):
+    """打开上游流并转发单段 Range；调用方负责流式读取。
 
     返回 (stream, final_url, headers)；调用方负责 close。
     """
     h = {"User-Agent": STREAM_UA, "Accept": "*/*", "Connection": "close"}
-    if start or end is not None:
-        h["Range"] = "bytes=%d-%s" % (start, "" if end is None else str(end))
+    if range_header:
+        h["Range"] = range_header
     req = urllib.request.Request(url, headers=h)
     r = urllib.request.urlopen(req, timeout=timeout)
-    if stop_at is not None:
-        r = _LimitedReader(r, stop_at)
     return r, r.geturl(), r.headers
-
-
-class _LimitedReader:
-    """只读到指定字节数就停，避免为解析 SPS 把整段 4K 切片读下来。"""
-
-    def __init__(self, r, limit):
-        self._r, self._limit, self._n = r, limit, 0
-
-    def read(self, n=-1):
-        if self._n >= self._limit:
-            return b""
-        if n is None or n < 0:
-            n = self._limit - self._n
-        else:
-            n = min(n, self._limit - self._n)
-        b = self._r.read(n)
-        self._n += len(b)
-        return b
-
-    def geturl(self):
-        return self._r.geturl()
-
-    @property
-    def headers(self):
-        return self._r.headers
-
-    def close(self):
-        try:
-            self._r.close()
-        except Exception:
-            pass
 
 
 def _abs(base, ref):
@@ -1881,10 +1931,10 @@ _prog_cache = {"mtime": None, "data": None}
 _prog_lock = threading.Lock()
 
 
-def _programs_index():
-    p = os.path.join(DATA, "programs.json")
+def _programs_index(output_dir):
+    p = os.path.join(output_dir, "programs.json")
     try:
-        mt = os.path.getmtime(p)
+        mt = (p, os.stat(p).st_mtime_ns)
     except OSError:
         return {}
     with _prog_lock:
@@ -1900,29 +1950,21 @@ def _programs_index():
     return data
 
 
-def _refresh_now_next(chs, nowts=None):
+def _refresh_now_next(chs, output_dir, nowts=None):
     """把每路的 now / next 换成按当前时间实算的结果（原地修改）。"""
     nowts = int(time.time()) if nowts is None else nowts
-    idx = _programs_index()
-    if not idx:
-        return
+    idx = _programs_index(output_dir)
     for c in chs:
         ps = idx.get(c.get("uuid")) or []
         cur = nxt = None
         for p in ps:
             if p["start"] <= nowts < p["end"]:
                 cur = p
-                break
-            if p["start"] > nowts:
+            elif p["start"] > nowts:
                 nxt = p
                 break
         c["now"] = {"t": cur["title"], "s": cur["start"], "e": cur["end"]} if cur else None
         c["next"] = {"t": nxt["title"], "s": nxt["start"], "e": nxt["end"]} if nxt else None
-
-
-def _load_channels_raw():
-    with open(os.path.join(DATA, "channels.json"), encoding="utf-8") as f:
-        return json.load(f)
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -1930,7 +1972,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     base_url = ""
 
     def __init__(self, *a, **kw):
-        super().__init__(*a, directory=DATA, **kw)
+        self.output_dir = _output_dir()  # 请求内不跨代读取
+        super().__init__(*a, directory=self.output_dir, **kw)
+
+    def do_HEAD(self):
+        self.send_response(405)
+        self.send_header("Allow", "GET, POST")
+        self.end_headers()
 
     # ---- 输出工具
     def _json(self, obj, code=200):
@@ -1943,7 +1991,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def _file(self, path, ctype, cache="no-store", hint_name=""):
-        p = os.path.join(DATA, path)
+        p = os.path.join(self.output_dir, path)
         if not os.path.isfile(p):
             msg = "文件尚未生成，请先执行一次更新"
             if hint_name and hint_name != path:
@@ -1963,7 +2011,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not re.match(r"^[0-9a-f]{12}\.png$", fn):
             self.send_error(404)
             return
-        p = os.path.join(LOGO_DIR, fn)
+        p = os.path.join(self.output_dir, "logo", fn)
         if not os.path.isfile(p):
             self.send_error(404)
             return
@@ -1978,10 +2026,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _epg_day(self, uid, day):
         """FongMi 按天节目单。查不到该频道/该天时返回空表而不是 404，
         否则 FongMi 面板会一直转圈等不到响应。"""
-        if not re.match(r"^[A-Za-z0-9_.-]{1,64}$", uid):
+        if not _valid_epg_uid(uid):
             self._json({"error": "bad uuid"}, 400)
             return
-        p = os.path.join(DATA, "epg", uid, day + ".json")
+        p = os.path.join(self.output_dir, "epg", uid, day + ".json")
         if os.path.isfile(p):
             data = open(p, "rb").read()
         else:
@@ -2006,7 +2054,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def _safe_meta(self):
         try:
-            return json.load(open(STATE_FILE, encoding="utf-8"))
+            with open(os.path.join(self.output_dir, "meta.json"), encoding="utf-8") as f:
+                return json.load(f)
         except Exception:
             return {}
 
@@ -2034,33 +2083,43 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(403)
             return
 
-        # 转发客户端 Range（Chrome/Safari 对 ts 分片常用）
+        # 保留单段 Range 的原始语义（含 0- 和后缀范围）。
         rng = (self.headers.get("Range") or "").strip()
-        start, end = 0, None
-        if rng.startswith("bytes="):
-            try:
-                a, _, b = rng[6:].partition("-")
-                start = int(a or 0)
-                end = int(b) if b else None
-            except Exception:
-                start, end = 0, None
-
+        if rng and not re.fullmatch(r"bytes=(?:[0-9]+-[0-9]*|-[0-9]+)", rng):
+            self.send_error(400, "Unsupported Range")
+            return
         try:
-            r, final, hdrs = _fetch(u, start=start, end=end)
+            r, final, hdrs = _fetch(u, range_header=rng)
+        except urllib.error.HTTPError as e:
+            if e.code == 416:
+                self.send_response(416)
+                if e.headers.get("Content-Range"):
+                    self.send_header("Content-Range", e.headers["Content-Range"])
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            else:
+                self.send_error(502)
+            e.close()
+            return
         except Exception as e:      # noqa: BLE001
             log("[代理] 取流失败 %s -> %s" % (u[:90], e))
             self.send_error(502)
             return
 
+        started = False
         try:
             ctype = (hdrs.get("Content-Type") or "").split(";")[0].strip()
             # 播放列表：必须整份读（几 KB），并改写内部地址
             head = r.read(200)
             if head.startswith(b"#EXTM3U") or "mpegurl" in ctype.lower():
-                rest = r.read()
-                proxy_base = "%s/stream?u=" % self.base_url
+                rest = r.read(1024 * 1024)
+                if len(head) + len(rest) > 1024 * 1024:
+                    self.send_error(502, "Upstream playlist too large")
+                    return
+                proxy_base = "/stream?u="
                 txt = _rewrite_m3u8((head + rest).decode("utf-8", "replace"), final, proxy_base)
                 body = txt.encode("utf-8")
+                started = True
                 self.send_response(200)
                 self.send_header("Content-Type", "application/vnd.apple.mpegurl")
                 self.send_header("Content-Length", str(len(body)))
@@ -2072,14 +2131,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
             # 媒体分片：流式转发，边收边发，不等整段
             total = hdrs.get("Content-Length")
-            status = 206 if (start or end is not None) else 200
-            self.send_response(status)
+            started = True
+            self.send_response(r.status)
             self.send_header("Content-Type", ctype or "video/mp2t")
             if total:
                 self.send_header("Content-Length", total)
             if hdrs.get("Content-Range"):
                 self.send_header("Content-Range", hdrs.get("Content-Range"))
-            self.send_header("Accept-Ranges", "bytes")
+            if hdrs.get("Accept-Ranges"):
+                self.send_header("Accept-Ranges", hdrs["Accept-Ranges"])
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
@@ -2092,10 +2152,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.wfile.write(chunk)
                 sent += len(chunk)
             # 上游长度比声明少时（直播切片正在写入），以实际发送为准
-            if total and sent != int(total):
-                log("[代理] %s 实际发送 %d / 声明 %s" % (u[:60], sent, total))
+            if total and str(sent) != total:
+                self.close_connection = True
+                log("[代理] 上游媒体长度不符（收到 %d 字节）" % sent)
         except (BrokenPipeError, ConnectionResetError):
-            pass                        # 播放器切台/seek 时会主动断开，属正常
+            self.close_connection = True  # 播放器切台/seek 时会主动断开
+        except (OSError, http.client.HTTPException) as e:
+            self.close_connection = True
+            log("[代理] 上游媒体读取中断（%s）" % type(e).__name__)
+            if not started:
+                self.send_error(502)
         finally:
             try:
                 r.close()
@@ -2130,26 +2196,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         # ---- API
         if path == "/api/status":
             cfg = load_config()
-            meta = {}
-            try:
-                meta = json.load(open(STATE_FILE, encoding="utf-8"))
-            except Exception:
-                pass
+            meta = self._safe_meta()
             # 分组构成：直接数 channels.json，保证与「节目源」页完全一致
             gcount = {}
             allc = []
             try:
-                allc = json.load(open(os.path.join(DATA, "channels.json"), encoding="utf-8"))
+                with open(os.path.join(self.output_dir, "channels.json"), encoding="utf-8") as f:
+                    allc = json.load(f)
                 for c in allc:
                     gcount[c.get("group", "其他")] = gcount.get(c.get("group", "其他"), 0) + 1
             except Exception:
                 pass
             try:
-                logos = sum(1 for f in os.listdir(LOGO_DIR)
+                logos = sum(1 for f in os.listdir(os.path.join(self.output_dir, "logo"))
                             if re.match(r"^[0-9a-f]{12}\.png$", f))
             except Exception:
                 logos = 0
-            self._json({"ok": True, "config": cfg, "meta": meta,
+            self._json({"ok": True, "version": _runtime_version(), "config": cfg, "meta": meta,
                         "updating": _updating, "base_url": self._self_base(),
                         "facets": {
                             "top": dict(sorted(gcount.items(), key=lambda kv: -kv[1])),
@@ -2181,27 +2244,25 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             g = qs.get("group", [""])[0]
             kw = qs.get("q", [""])[0].strip().lower()
             try:
-                chs = json.load(open(os.path.join(DATA, "channels.json"), encoding="utf-8"))
+                with open(os.path.join(self.output_dir, "channels.json"), encoding="utf-8") as f:
+                    chs = json.load(f)
             except Exception:
                 self._json({"error": "频道表尚未生成，请先执行一次更新"}, 404)
                 return
             # ---- 右侧列表的「当前节目」必须实时算，不能读 channels.json 里的存量值。
             # channels.json 是每天 03:30 生成时写死的 now/next，之后一整天都不会变，
             # 于是界面上的节目名永远停在凌晨那一档 —— 这就是「EPG 不实时更新」的根因。
-            _refresh_now_next(chs)
+            _refresh_now_next(chs, self.output_dir)
+            groups = {}
+            for c in chs:
+                groups[c["group"]] = groups.get(c["group"], 0) + 1
             if g and g != "全部":
                 chs = [c for c in chs if c["group"] == g]
             if kw:
                 chs = [c for c in chs if kw in c["name"].lower() or kw in c["uuid"].lower()
                        or kw in str(c.get("num", ""))]
-            groups = {}
-            try:
-                allc = _load_channels_raw()
-                for c in allc:
-                    groups[c["group"]] = groups.get(c["group"], 0) + 1
-            except Exception:
-                pass
             self._json({"ok": True, "total": len(chs), "groups": groups,
+                        "generation": self._safe_meta().get("generation"),
                         "order": list(GROUP_ORDER), "channels": chs})
             return
 
@@ -2210,18 +2271,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if not uid:
                 self._json({"error": "缺少 uuid"}, 400)
                 return
-            try:
-                pp = json.load(open(os.path.join(DATA, "programs.json"), encoding="utf-8"))
-            except Exception:
+            if not os.path.isfile(os.path.join(self.output_dir, "programs.json")):
                 self._json({"error": "节目单尚未生成"}, 404)
                 return
+            pp = _programs_index(self.output_dir)
             ps = pp.get(uid, [])
             day = qs.get("date", [""])[0]
             if day:
                 lo = datetime.strptime(day, "%Y%m%d").replace(tzinfo=TZ8)
                 hi = lo + timedelta(days=1)
                 ps = [p for p in ps if p["end"] > int(lo.timestamp()) and p["start"] < int(hi.timestamp())]
-            self._json({"ok": True, "uuid": uid, "count": len(ps), "programs": ps})
+            self._json({"ok": True, "uuid": uid, "count": len(ps), "programs": ps,
+                        "generation": self._safe_meta().get("generation")})
             return
 
         if path == "/api/schedule":
@@ -2243,7 +2304,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return
             ch = None
             try:
-                idx = json.load(open(os.path.join(DATA, "channels.json"), encoding="utf-8"))
+                with open(os.path.join(self.output_dir, "channels.json"), encoding="utf-8") as f:
+                    idx = json.load(f)
                 for c in idx:
                     if c.get("uuid") == uid:
                         ch = c
@@ -2262,12 +2324,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except Exception:
                 self._json({"ok": False, "msg": "时间参数错误"}, 400)
                 return
-            # 回看有效期：不能晚于现在，也不能太早（运营商一般只留 7 天）
+            if e <= s:
+                self._json({"ok": False, "msg": "结束时间必须晚于开始时间"}, 400)
+                return
+            # 以已发布清单的设置为准；实际上游存档跨度需实测。
             if e > time.time() + 60:
                 self._json({"ok": False, "msg": "该节目尚未开始，无法回看"}, 400)
                 return
-            if time.time() - s > 8 * 86400:
-                self._json({"ok": False, "msg": "回看仅保留约 7 天，该节目已过期"}, 400)
+            backup_days = self._safe_meta().get("backup_days", DEFAULTS["backup_days"])
+            if time.time() - s > backup_days * 86400:
+                self._json({"ok": False, "msg": "该节目已超过配置的回看天数"}, 400)
                 return
             fa = datetime.fromtimestamp(s, TZ8).strftime("%Y%m%d%H%M%S")
             fb = datetime.fromtimestamp(e, TZ8).strftime("%Y%m%d%H%M%S")
@@ -2358,7 +2424,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             ext = os.path.splitext(name)[1].lower()
             # ASCII 别名：文件没落盘时回落到对应的中文源文件，保证地址永远可用
             real = name
-            if name in ALIASES and not os.path.isfile(os.path.join(DATA, name)):
+            if name in ALIASES and not os.path.isfile(os.path.join(self.output_dir, name)):
                 real = ALIASES[name]
             self._file(real, mimes.get(ext, "application/octet-stream"),
                        hint_name=name)
@@ -2430,7 +2496,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             cur = load_config()
             restart = False
             for k in ("update_at", "district", "days", "history_days",
-                      "backup_days", "localize_logo", "output_mode", "port"):
+                      "backup_days", "localize_logo", "epg_enable", "output_mode", "port"):
                 if k not in body:
                     continue
                 v = body[k]
@@ -2453,8 +2519,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         return
                     if k == "port" and v != cur.get("port"):
                         restart = True
-                elif k in ("localize_logo",):
-                    v = bool(v)
+                elif k in ("localize_logo", "epg_enable"):
+                    if not isinstance(v, bool):
+                        self._json({"ok": False, "msg": "%s 必须是布尔值" % k}, 400)
+                        return
                 elif k == "district":
                     v = str(v)
                 elif k == "output_mode":
@@ -2474,7 +2542,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             log("[配置] 已更新: %s" % json.dumps(
                 {k: cur.get(k) for k in ("update_at", "district", "days",
                                          "history_days", "backup_days",
-                                         "localize_logo", "output_mode", "port")},
+                                         "localize_logo", "epg_enable", "output_mode", "port")},
                 ensure_ascii=False))
             # 重新排程：终止旧 scheduler，起新的（端口变更时由用户重启，避免中途断连）
             if not restart:
@@ -2516,8 +2584,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", mimes[ext])
         self.send_header("Content-Length", str(len(data)))
-        # 静态资源可缓存，加快桌面窗口二次打开
-        self.send_header("Cache-Control", "public, max-age=604800")
+        # 应用入口资源随包更新，不沿用浏览器里的旧 UI；第三方固定资源仍可缓存。
+        self.send_header("Cache-Control", "no-cache" if name in ("workspace.css", "workspace.js")
+                         else "public, max-age=604800")
         self.end_headers()
         self.wfile.write(data)
 
@@ -2529,13 +2598,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         pass
 
 
-def serve(cfg, base_url):
+def serve(cfg, base_url, initial_update=False):
     port = cfg["port"]
     socketserver.ThreadingTCPServer.allow_reuse_address = True
     Handler.cfg = cfg
     Handler.base_url = base_url
     with socketserver.ThreadingTCPServer(("0.0.0.0", port), Handler) as srv:
         log("[服务] 已启动 :%d  BASE_URL=%s" % (port, base_url))
+        if initial_update:
+            threading.Thread(target=do_update, args=(cfg, base_url, "startup"), daemon=True).start()
         srv.serve_forever()
 
 
@@ -2566,14 +2637,11 @@ def main():
         log("完成 %s" % json.dumps(meta, ensure_ascii=False))
         return 0
 
-    # 首次启动若没有数据，同步跑一次（否则先起服务，让 UI 可访问）
-    if not os.path.exists(os.path.join(DATA, "channels.json")):
-        do_update(cfg, base, reason="startup")
-    else:
-        log("[启动] 已有数据，跳过首次更新，交由定时任务")
-
+    initial_update = not args.no_update and not os.path.exists(os.path.join(_output_dir(), "channels.json"))
+    if not initial_update:
+        log("[启动] 跳过首次更新，交由定时任务")
     _kick_scheduler(cfg, base)
-    serve(cfg, base)
+    serve(cfg, base, initial_update=initial_update)
     return 0
 
 

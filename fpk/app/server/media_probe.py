@@ -440,10 +440,12 @@ def probe_url(m3u8_url, timeout=8, max_bytes=None):
     import urllib.parse
     req = urllib.request.Request(m3u8_url, headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        body = r.read().decode("utf-8", "replace")
+        raw = r.read(1024 * 1024 + 1)
+        if len(raw) > 1024 * 1024:
+            raise RuntimeError("播放列表过大")
+        body = raw.decode("utf-8", "replace")
         base = r.geturl()
     segs = []
-    dur = None
     last = None
     for line in body.splitlines():
         t = line.strip()
@@ -452,8 +454,9 @@ def probe_url(m3u8_url, timeout=8, max_bytes=None):
                 last = float(t.split(":")[1].split(",")[0])
             except Exception:
                 last = None
-        elif t and not t.startswith("#"):
+        elif t and not t.startswith("#") and last is not None:
             segs.append((urllib.parse.urljoin(base, t), last))
+            last = None
     if not segs:
         raise RuntimeError("播放列表里没有切片")
     # 取倒数第二个（最后一个可能还在写入）
@@ -463,9 +466,12 @@ def probe_url(m3u8_url, timeout=8, max_bytes=None):
         h["Range"] = "bytes=0-%d" % (max_bytes - 1)
     req = urllib.request.Request(seg_url, headers=h)
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        ts = r.read(max_bytes) if max_bytes else r.read()
+        limit = max_bytes or 16 * 1024 * 1024
+        raw = r.read(limit + 1)
+        partial = r.status == 206 or len(raw) > limit
+        ts = raw[:limit]
     info = {"bytes": len(ts), "seg_dur": seg_dur}
-    if seg_dur:
+    if seg_dur and not partial:
         info["bitrate"] = int(len(ts) * 8 / seg_dur)
 
     pes = extract_pes(ts)

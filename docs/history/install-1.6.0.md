@@ -1,8 +1,10 @@
 # 江苏移动 IPTV · 飞牛 fnOS 应用
 
+> **历史文档**：仅适用于 1.6.0。当前安装与接入请看 [README.md](../../README.md)，不要照本页旧回看参数配置。
+
 `jsydiptv-1.6.0.fpk` — 江苏移动 IPTV 直播源 / 回看 / 节目单自动更新应用。
 
-> 技术细节与排障见 `DEVELOPMENT-REPORT.md`；升级前后检查见 `VERIFY-CHECKLIST.md`。
+> 技术细节与排障见 [开发报告](development-report.md)；升级前后检查见 [验收清单](../verification.md)。
 
 ## 安装
 

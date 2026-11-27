@@ -1,5 +1,7 @@
 # 江苏移动 IPTV 应用开发报告
 
+> 历史快照：保留当时的目录和接口描述；现行入口见 [README](../../README.md) 和 [验收清单](../verification.md)。
+
 > 应用标识：`jsydiptv` ｜ 目标平台：飞牛 fnOS（fnnas）
 > 当前版本：**1.6.0** ｜ 报告生成：2026-11-25（1.6.0 修订）
 > 适用：后续版本更新的参考基线、回归验证清单、故障定位手册
@@ -717,7 +719,7 @@ SELECT app_name,url FROM entry WHERE app_name='jsydiptv';
      亮度 light=270 / dark=8，全透明 0，解析失败 0
 ```
 真正原因：`localize_logos()` 把 logo 写成**硬编码绝对地址**
-`http://192.168.2.3:18123/logo/xxx.png`。一旦用域名/别的 IP/fnOS 桌面
+`http://192.168.1.100:18123/logo/xxx.png`。一旦用域名/别的 IP/fnOS 桌面
 iframe 访问，`<img>` 加载失败 → 露出 `.lg.t-light` 的深色底 `rgb(22,25,29)`
 → 视觉上就是「纯黑方块」。
 
@@ -800,7 +802,7 @@ meta.json channels.json programs.json epg/
 
 ## 13. 后续更新必查清单
 
-更新任何一版前后，逐项核对（详细操作见 `VERIFY-CHECKLIST.md`）：
+更新任何一版前后，逐项核对（详细操作见 [验收清单](../verification.md)）：
 
 ### 13.1 打包前（源码层）
 
@@ -897,4 +899,4 @@ EPG 条目        约 7 万条 programme
 ---
 
 *本报告基于 1.3.1 源码逐行核实生成，所有参数均为实际取值而非估算。
-更新版本后请同步修订本文件与 `VERIFY-CHECKLIST.md`。*
+更新版本后请同步修订本文件与 [验收清单](../verification.md)。*
