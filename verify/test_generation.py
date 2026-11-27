@@ -136,18 +136,34 @@ class Generations(unittest.TestCase):
         self.assertEqual(details['sample'], 7)
         self.assertEqual(len(set(c.args[0] for c in probe.call_args_list)), 7)
 
-    def test_cctv1_hd_does_not_reenter_4k_group(self):
-        raw = [dict(uuid='hd', name='CCTV-1 4K', cp='jsyd', code='HD'),
-               dict(uuid='4k', name='CCTV1高清臻享', cp='gitv', code='UHD', num='201'),
-               dict(uuid='sd', name='CCTV-1', cp='gitv', code='SD', num='1')]
-        raw[0].update(h=1080, grp_uhd=True)
-        raw[1].update(h=2160, grp_uhd=True, is_4k=True)
-        app._reclassify_uhd(raw)
-        self.assertEqual([(c['uuid'], c['group'], c['name']) for c in raw],
-                         [('hd', '央视', 'CCTV-1'), ('4k', '4K', 'CCTV-1 4K'), ('sd', '央视', 'CCTV-1（备用）')])
-        raw[0].update(h=2160, is_4k=True)
-        app._reclassify_uhd(raw)
-        self.assertEqual(raw[0]['group'], '4K')
+    def test_uhd_dedup_preserves_group_and_guide_contracts(self):
+        channels, programs = self.fixtures(epg_enable=True)
+        for uuid, name, height, zhx, groups in [
+            ('hd', 'CCTV-1 4K', 1080, True, ['超高清', '央视']),
+            ('4k', 'CCTV1高清臻享', 2160, True, ['超高清']),
+            ('sd', 'CCTV-1', None, False, ['央视']),
+            ('zx', '高清臻享睛彩竞技', 1080, True, ['超高清']),
+            ('unknown', '睛彩竞技4K', None, False, ['超高清']),
+            ('plus', 'CCTV-1+4K', 2160, True, ['超高清']),
+        ]:
+            channels.append(dict(channels[0], uuid=uuid, name=name, h=height, zhx=zhx, otypes=groups,
+                                 code=uuid, is_4k=height==2160, uhd_unverified=uuid=='unknown'))
+            programs.append(dict(programs[0], uuid=uuid))
+        self.collect.side_effect = lambda *args, **kwargs: (channels, programs)
+        self.run_update()
+        out = self.current()
+        smart = json.loads((out/'channels.json').read_text())
+        by_id = {c['uuid']:c for c in smart}
+        self.assertEqual({c['uuid'] for c in smart if c['group']=='4K'}, {'4k','zx','plus'})
+        self.assertEqual([(c['uuid'], c['group']) for c in smart if c['name']=='CCTV-1'], [('hd','央视')])
+        self.assertIn('1080P 臻享', [a['name'] for a in by_id['4k']['alts']])
+        self.assertIn('/lookback/4k/', by_id['4k']['catchup'])
+        self.assertEqual(set(json.loads((out/'programs.json').read_text())), set(by_id))
+        orig = json.loads((out/'orig.json').read_text())
+        groups = {g['name']:{c['uuid'] for c in g['channels']} for g in orig['groups']}
+        self.assertEqual(groups['超高清'], {'4k','zx','plus'})
+        self.assertTrue({'hd','sd'} <= groups['央视'])
+        self.assertIn('sd', {p.attrib['channel'] for p in ET.parse(out/'orig_epg.xml').findall('programme')})
 
 
 ORIGINAL_PROBE = app.probe_uhd

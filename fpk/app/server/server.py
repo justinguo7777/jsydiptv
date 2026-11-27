@@ -33,6 +33,7 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 import xml.etree.ElementTree as ET
 import urllib.error
 import urllib.parse
@@ -188,7 +189,6 @@ def _runtime_version():
 
 _lock = threading.Lock()
 _updating = {"running": False, "started": 0, "error": ""}
-_DROPPED_UUIDS = set()      # 4K 组内被去重删除的 uuid（节目单也要一并剔除）
 
 
 def log(*a):
@@ -736,7 +736,7 @@ def _classify(c):
     """给频道定最终分组（唯一权威入口，供 collect / _reclassify 复用）。
 
     判定顺序（越靠前优先级越高）：
-      1. 归入 4K 组：真 4K（is_4k）或「高清臻享」（grp_uhd）—— 用户要求高清臻享也进 4K 组
+      1. 归入 4K 组：真 4K（is_4k）、 「高清臻享」（zhx）或待探测的高画质候选—— 用户要求高清臻享也进 4K 组
       2. 地方台：13 地市清单独有 → 「地方」
       3. 按上游原分组名（otypes）：
          央视 → 央视；卫视 → 卫视；本地 → 江苏
@@ -744,10 +744,7 @@ def _classify(c):
          少儿 → 少儿动画；生活 → 生活纪录；广播 → 音乐广播；购物 → 购物
       4. 兜底：用频道名特征再分一次（otypes 缺失时有 12 个台），最后落「生活纪录」
     """
-    # 央视一套的已验证 1080p 主档必须留在央视组；仍尊重实测真 4K。
-    if c.get("cctv1_hd") and not c.get("is_4k") and c.get("h") == 1080:
-        return "央视"
-    if c.get("is_4k") or c.get("grp_uhd") or c.get("uhd_unverified"):
+    if c.get("is_4k") or c.get("zhx") or c.get("uhd_unverified"):
         return GROUP_UHD
     if c.get("group_from_city"):
         return "地方"
@@ -883,60 +880,88 @@ def probe_uhd(chs, cdn, quiet=False):
             % (ok, len(cand), n4k, nzx, sum(1 for c in cand if c.get("zhx") and c.get("is_4k"))))
 
 
-_CCTV1_VARIANT = re.compile(r"^(?:CCTV[- ]?1(?:\s*4K|\s*高清臻享)?|央视[IⅠ一1]套)$", re.I)
+_QUALITY_AFFIX = re.compile(r"^(?:高清臻享|超高清|UHD|4K)|(?:高清臻享|超高清|UHD|4K|2160P|1080P|高清|标清)$", re.I)
+
+
+def _uhd_channel_key(name):
+    """仅去除名称两端的画质标记，保留频道名称和 + 等业务标记。"""
+    key = re.sub(r"\s+", "", unicodedata.normalize("NFKC", name or "")).upper()
+    while key:
+        stripped = _QUALITY_AFFIX.sub("", key).strip("-_()【】[]")
+        if stripped == key:
+            break
+        key = stripped
+    if key in {"央视I套", "央视一套", "央视1套"}:
+        return "CCTV-1"
+    return re.sub(r"^CCTV-?(\d+)$", r"CCTV-\1", key)
+
+
+def _uhd_rank(c):
+    return (not c.get("is_4k"), bool(c.get("uhd_unverified")), not c.get("zhx"),
+            -int(c.get("h") or 0), -int(c.get("back") or 0),
+            int(re.sub(r"\D", "", c.get("num") or "") or 999999), c["uuid"])
+
+
+def _unique_uhd(channels):
+    """从同逻辑频道或同一路流中择优，返回胜出频道及其余档位。"""
+    by_name, by_stream, winners, alternatives = {}, {}, [], []
+    for c in sorted(channels, key=_uhd_rank):
+        name = _uhd_channel_key(c.get("name"))
+        stream = (c.get("cp"), c.get("code")) if c.get("code") else None
+        winner = (by_name.get(name) if name else None) or (by_stream.get(stream) if stream else None)
+        if winner is None:
+            winner = c
+            winners.append(c)
+        else:
+            alternatives.append((winner, c))
+        if name:
+            by_name.setdefault(name, winner)
+        if stream:
+            by_stream.setdefault(stream, winner)
+    return winners, alternatives
+
+
+def _add_live_alternative(winner, variant):
+    """保留备选直播。独立 UUID 的回看与节目单由其原版条目承载。"""
+    alts = winner.setdefault("alts", [])
+    seen = {(a["cp"], a["code"]) for a in alts} | {(winner["cp"], winner["code"])}
+    source = {"name": variant.get("res_name") or variant["name"], "cp": variant["cp"], "code": variant["code"]}
+    if variant.get("h") == 1080:
+        source["name"] = "1080P 臻享" if variant.get("zhx") else "1080P"
+    for alt in [source, *(variant.get("alts") or [])]:
+        key = (alt["cp"], alt["code"])
+        if key not in seen:
+            alts.append(dict(alt))
+            seen.add(key)
 
 
 def _reclassify_uhd(chs):
-    """实测完分辨率后重跑分类：真 4K / 高清臻享 进 4K 组，其余按最终规则归位。
-    统一走 _classify，避免 collect() 里按代码标记的粗略初判残留。"""
+    """实测后生成智能分组。原版所用的上游频道集合由调用方保留。"""
     for c in chs:
-        if c.get("h") == 1080 and not c.get("is_4k") and _CCTV1_VARIANT.fullmatch((c.get("name") or "").strip()):
-            c["cctv1_hd"] = True
-            c["name"] = "CCTV-1"
-            c["num"] = "1"
-            c["sort_num"] = 1
         c["group"] = _classify(c)
-    # 规范实测真 4K 的央视一套名称；不要仅按「臻享」字样猜分辨率。
-    for c in chs:
-        if c.get("is_4k") and _CCTV1_VARIANT.fullmatch((c.get("name") or "").strip()):
-            c["name"] = "CCTV-1 4K"
-    # 上游另有同名普通入口；保留其 UUID、流和节目单，只消除名字歧义。
-    if any(c.get("cctv1_hd") and c["group"] == "央视" and c.get("h") == 1080 for c in chs):
-        for c in chs:
-            if not c.get("cctv1_hd") and c["group"] == "央视" and re.fullmatch(r"CCTV-?1", c.get("name") or "", re.I):
-                c["name"] = "CCTV-1（备用）"
-    # 统一 4K 组里 CCTV 台命名：CCTV-164K → CCTV-16 4K（与 CCTV-1 4K 风格一致）
-    for c in chs:
-        if c.get("group") == GROUP_UHD:
-            m = re.match(r"^CCTV-?(\d+)4K$", c.get("name") or "")
-            if m:
-                c["name"] = "CCTV-%s 4K" % m.group(1)
-    _dedup_4k(chs)
-
-
-def _dedup_4k(chs):
-    """4K 组内同一路流（cp+code 相同）只保留一条。
-    典型：num=1「CCTV-1」(4K 档) 与 num=201「CCTV1高清臻享」共用 G_CCTV-1-AVS-4K264，
-    两条都进 4K 组会重复。保留台号更小/名称更正式的一条。返回删除的条目数。
-    """
-    seen = {}
-    keep = []
-    removed = 0
-    for c in sorted([x for x in chs if x.get("group") == GROUP_UHD],
-                    key=lambda x: (int(re.sub(r"\D", "", x.get("num") or "") or 0), x.get("name") or "")):
-        k = (c.get("cp"), c.get("code"))
-        if k in seen:
-            removed += 1
-            c["_drop"] = True
-            continue
-        seen[k] = c
-    if removed:
-        dropped = [x["uuid"] for x in chs if x.get("_drop")]
-        _DROPPED_UUIDS.update(dropped)
-        chs[:] = [x for x in chs if not x.get("_drop")]
-        for x in chs:
-            x.pop("_drop", None)
-        log("      4K 组去重：移除 %d 条同流重复 %s" % (removed, dropped))
+        key = _uhd_channel_key(c.get("name"))
+        if c.get("is_4k") and re.fullmatch(r"CCTV-\d+", key):
+            c["name"] = key + " 4K"
+    _, variants = _unique_uhd(c for c in chs if c["group"] == GROUP_UHD)
+    dropped = set()
+    for winner, variant in variants:
+        _add_live_alternative(winner, variant)
+        # 保留央视组的一套普通入口，有实测 1080p 时优先使用这一路。
+        if (_uhd_channel_key(winner["name"]) == _uhd_channel_key(variant["name"]) == "CCTV-1"
+                and winner.get("is_4k") and variant.get("h") == 1080 and not variant.get("is_4k")):
+            variant.update(group="央视", name="CCTV-1", num="1", sort_num=1)
+        else:
+            dropped.add(variant["uuid"])
+    cctv1 = [c for c in chs if c["group"] == "央视" and _uhd_channel_key(c["name"]) == "CCTV-1"]
+    if cctv1:
+        main, *others = sorted(cctv1, key=lambda c: (-int(c.get("h") or 0), _uhd_rank(c)))
+        main.update(name="CCTV-1", num="1", sort_num=1)
+        for variant in others:
+            _add_live_alternative(main, variant)
+            dropped.add(variant["uuid"])
+    if dropped:
+        chs[:] = [c for c in chs if c["uuid"] not in dropped]
+        log("      智能清单合并 %d 条重复档位" % len(dropped))
 
 
 def collect(districts, days, hist_days=7, epg_enable=True):
@@ -1046,47 +1071,11 @@ def collect(districts, days, hist_days=7, epg_enable=True):
     gsum = {}
     for c in chs:
         gsum[c["group"]] = gsum.get(c["group"], 0) + 1
-    _ensure_cctv1_in_cctv(chs)
-    # 整理后再统计一次（CCTV-1 改名/并入会改变分组归属）
-    gsum = {}
-    for c in chs:
-        gsum[c["group"]] = gsum.get(c["group"], 0) + 1
     log("      合计 %d 频道 / %d 条节目（%d 个地市）｜%s"
         % (len(chs), len(prs), len(districts),
            " ".join("%s%d" % (k, v) for k, v in sorted(gsum.items(),
                     key=lambda kv: GROUP_ORDER.index(kv[0]) if kv[0] in GROUP_ORDER else 9))))
     return chs, prs
-
-
-def _ensure_cctv1_in_cctv(chs):
-    """央视组必须完整含 CCTV-1（含一路 1080P 源）。
-    背景：上游把 CCTV-1 的 4K 档（num=1，名也叫 CCTV-1）放进了「超高清」，
-    归到 4K 组；而央视组（assort 116）自带的 CCTV-1 只有一个「标清」档，
-    与 4K 档共用同一 uuid 时会被去重吞掉，导致央视组看不到 CCTV-1。
-    处理：
-      · 「央视I套」(num=1000) 实为 CCTV-1 的 1080P 源，改名为「CCTV-1」并放进央视组；
-      · 4K 组里的 CCTV-1（真 4K）保留，两者同名不同清晰度，符合「央视组补 1080P 源」的需求。
-    """
-    cctv1_hd = None
-    for c in chs:
-        if (c.get("name") or "") == "央视I套":
-            cctv1_hd = c
-            break
-    if cctv1_hd is None:
-        # 找不到就退而求其次：任一路「CCTV-1」且非真 4K 的作为央视组 1080P 源
-        for c in chs:
-            if re.match(r"^CCTV-?1$", c.get("name") or "") and not c.get("is_4k"):
-                cctv1_hd = c
-                break
-    if cctv1_hd is not None:
-        cctv1_hd["name"] = "CCTV-1"
-        cctv1_hd["cctv1_hd"] = True
-        cctv1_hd["group"] = "央视"
-        cctv1_hd["grp_uhd"] = False
-        cctv1_hd["is_4k"] = False
-        # 央视组用台号 1，保证排在 CCTV-2 之前（4K 组那份在别组，台号重复无碍）
-        cctv1_hd["num"] = "1"
-        cctv1_hd["sort_num"] = 1
 
 
 def gkey(ch):
@@ -1487,6 +1476,8 @@ def write_orig_outputs(out, cdn, channels, programs, backup_days, base_url=""):
     grouped = {}
     for _aid, gname in ORIG_GROUPS:
         hit = [c for c in channels if gname in member.get(c["uuid"], [])]
+        if gname == "超高清":
+            hit, _ = _unique_uhd(hit)
         hit.sort(key=lambda x: (int(re.sub(r"\D", "", onum(x) or "") or 0), oname(x)))
         grouped[gname] = hit
 
@@ -1547,7 +1538,7 @@ def write_orig_outputs(out, cdn, channels, programs, backup_days, base_url=""):
 
     write("orig.json", json.dumps({
         "updated": stamp,
-        "note": "使用上游 11 组及归属重建；台名、台号与排序使用当前频道数据",
+        "note": "使用上游 11 组及归属重建；超高清组同台优先保留实测 4K",
         "total_entries": total,
         "unique_channels": len(used),
         "groups": [{"name": gname, "assortId": aid, "count": len(grouped[gname]),
@@ -1673,7 +1664,6 @@ def run_once(cfg, base_url=""):
         except BlockingIOError:
             raise RuntimeError("此数据目录已有更新在进行") from None
         previous = _output_dir()
-        _DROPPED_UUIDS.clear()
         chs, prs = collect(districts, cfg["days"], cfg["history_days"], epg_enable=epg_enable)
         if not chs:
             raise RuntimeError("一个频道都没拿到，保留上一版")
@@ -1721,18 +1711,22 @@ def _guard_epg_coverage(previous, channels, programs):
 
 
 def _prepare_generation(build, previous, cfg, base_url, cdn, chs, prs, detail, epg_enable):
-    prs = [p for p in prs if p["uuid"] not in _DROPPED_UUIDS] if epg_enable else []
-    if epg_enable:
-        _guard_epg_coverage(previous, chs, prs)
+    all_ids = {c["uuid"] for c in chs}
+    prs = [p for p in prs if p["uuid"] in all_ids] if epg_enable else []
     if cfg["localize_logo"]:
         n = localize_logos(chs, base_url, os.path.join(build, "logo"), os.path.join(previous, "logo"))
         log("[台标] 本地化 %d/%d" % (n, len(chs)))
     log("[3/5] 实测高画质频道分辨率 ...")
     probe_uhd(chs, cdn)
+    original = [dict(c) for c in chs]
     _reclassify_uhd(chs)
+    smart_ids = {c["uuid"] for c in chs}
+    smart_programs = [p for p in prs if p["uuid"] in smart_ids]
+    if epg_enable:
+        _guard_epg_coverage(previous, chs, smart_programs)
     minimal = cfg["output_mode"] == "minimal"
-    write_outputs(build, cdn, chs, prs, cfg["backup_days"], cfg["days"], base_url, minimal, epg_enable)
-    total, unique = write_orig_outputs(build, cdn, chs, prs, cfg["backup_days"], base_url)
+    write_outputs(build, cdn, chs, smart_programs, cfg["backup_days"], cfg["days"], base_url, minimal, epg_enable)
+    total, unique = write_orig_outputs(build, cdn, original, prs, cfg["backup_days"], base_url)
     log("      原版分组清单：%d 条 / %d 个频道" % (total, unique))
     detail = dict(detail, privacy="clean")  # 只有后续整代检查通过才会发布这份元数据
     meta = {
@@ -1740,7 +1734,7 @@ def _prepare_generation(build, previous, cfg, base_url, cdn, chs, prs, detail, e
         "output_mode": cfg["output_mode"], "updated": datetime.now(TZ8).strftime("%Y-%m-%d %H:%M:%S"),
         "cdn": cdn, "channels": len(chs),
         "with_catchup": sum(1 for ch in chs if ch["back"] > 0),
-        "programs": len(prs), "backup_days": cfg["backup_days"],
+        "programs": len(smart_programs), "backup_days": cfg["backup_days"],
         "epg_programs": _count_epg(build), "status": "ok", "check": detail,
         "uhd": sum(1 for ch in chs if ch.get("group") == GROUP_UHD),
         "uhd_real": sum(1 for ch in chs if ch.get("is_4k")),
