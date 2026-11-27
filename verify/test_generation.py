@@ -137,10 +137,9 @@ class Generations(unittest.TestCase):
         self.assertEqual(len(set(c.args[0] for c in probe.call_args_list)), 7)
 
     def test_cctv1_hd_does_not_reenter_4k_group(self):
-        raw = [dict(uuid='hd', name='央视I套', cp='jsyd', code='HD'),
+        raw = [dict(uuid='hd', name='CCTV-1 4K', cp='jsyd', code='HD'),
                dict(uuid='4k', name='CCTV1高清臻享', cp='gitv', code='UHD', num='201'),
                dict(uuid='sd', name='CCTV-1', cp='gitv', code='SD', num='1')]
-        app._ensure_cctv1_in_cctv(raw)
         raw[0].update(h=1080, grp_uhd=True)
         raw[1].update(h=2160, grp_uhd=True, is_4k=True)
         app._reclassify_uhd(raw)

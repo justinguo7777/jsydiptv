@@ -883,14 +883,22 @@ def probe_uhd(chs, cdn, quiet=False):
             % (ok, len(cand), n4k, nzx, sum(1 for c in cand if c.get("zhx") and c.get("is_4k"))))
 
 
+_CCTV1_VARIANT = re.compile(r"^(?:CCTV[- ]?1(?:\s*4K|\s*高清臻享)?|央视[IⅠ一1]套)$", re.I)
+
+
 def _reclassify_uhd(chs):
     """实测完分辨率后重跑分类：真 4K / 高清臻享 进 4K 组，其余按最终规则归位。
     统一走 _classify，避免 collect() 里按代码标记的粗略初判残留。"""
     for c in chs:
+        if c.get("h") == 1080 and not c.get("is_4k") and _CCTV1_VARIANT.fullmatch((c.get("name") or "").strip()):
+            c["cctv1_hd"] = True
+            c["name"] = "CCTV-1"
+            c["num"] = "1"
+            c["sort_num"] = 1
         c["group"] = _classify(c)
     # 规范实测真 4K 的央视一套名称；不要仅按「臻享」字样猜分辨率。
     for c in chs:
-        if c.get("is_4k") and re.fullmatch(r"CCTV[- ]?1(?:\s*4K|高清臻享)?", c.get("name") or "", re.I):
+        if c.get("is_4k") and _CCTV1_VARIANT.fullmatch((c.get("name") or "").strip()):
             c["name"] = "CCTV-1 4K"
     # 上游另有同名普通入口；保留其 UUID、流和节目单，只消除名字歧义。
     if any(c.get("cctv1_hd") and c["group"] == "央视" and c.get("h") == 1080 for c in chs):
