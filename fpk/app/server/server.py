@@ -744,6 +744,9 @@ def _classify(c):
          少儿 → 少儿动画；生活 → 生活纪录；广播 → 音乐广播；购物 → 购物
       4. 兜底：用频道名特征再分一次（otypes 缺失时有 12 个台），最后落「生活纪录」
     """
+    # 央视一套的已验证 1080p 主档必须留在央视组；仍尊重实测真 4K。
+    if c.get("cctv1_hd") and not c.get("is_4k") and c.get("h") == 1080:
+        return "央视"
     if c.get("is_4k") or c.get("grp_uhd") or c.get("uhd_unverified"):
         return GROUP_UHD
     if c.get("group_from_city"):
@@ -885,11 +888,15 @@ def _reclassify_uhd(chs):
     统一走 _classify，避免 collect() 里按代码标记的粗略初判残留。"""
     for c in chs:
         c["group"] = _classify(c)
-    # probe 之后 is_4k 才准确：把 4K 组里的 CCTV-1 标注清晰度，
-    # 避免与央视组补进来的 1080P「CCTV-1」同名混淆（两者 uuid 不同）。
+    # 规范实测真 4K 的央视一套名称；不要仅按「臻享」字样猜分辨率。
     for c in chs:
-        if c.get("group") == GROUP_UHD and re.match(r"^CCTV-?1$", c.get("name") or "") and c.get("is_4k"):
+        if c.get("is_4k") and re.fullmatch(r"CCTV[- ]?1(?:\s*4K|高清臻享)?", c.get("name") or "", re.I):
             c["name"] = "CCTV-1 4K"
+    # 上游另有同名普通入口；保留其 UUID、流和节目单，只消除名字歧义。
+    if any(c.get("cctv1_hd") and c["group"] == "央视" and c.get("h") == 1080 for c in chs):
+        for c in chs:
+            if not c.get("cctv1_hd") and c["group"] == "央视" and re.fullmatch(r"CCTV-?1", c.get("name") or "", re.I):
+                c["name"] = "CCTV-1（备用）"
     # 统一 4K 组里 CCTV 台命名：CCTV-164K → CCTV-16 4K（与 CCTV-1 4K 风格一致）
     for c in chs:
         if c.get("group") == GROUP_UHD:
