@@ -35,7 +35,8 @@ python3 -B verify/round1_api.py --base-url "$TEST_URL" --version "$VERSION" --mo
 - [ ] API 检查通过：两套清单、Kodi 格式、FongMi 配置与按日 EPG、EPG 关闭时的空表与不附带 EPG 地址、完整/精简实际产物一致。频道数按当前上游数据，不用历史固定值断言。
 - [ ] 在测试首页执行 `verify/round2_ui.js`，记录 `ok` 和失败项。避开正在更新和人工筛选列表的时段。
 - [ ] 选两组普通直播和一组高画质台，实际确认连续画面与声音；在支持与不支持 HEVC 的浏览器分别验证。未测到的频道不显示真 4K；有合适直播备选档才可降档。
-- [ ] 对照节目单选已播节目，确认播放内容及时间段；网页刷新当前节目或遇到降档提示均不得切回直播。用 FongMi、Kodi 及约定的其他播放器版本分别验证；天光云影只验直播。仅 `HTTP 200` 或取得播放 URL 不算通过。
+- [ ] 对照节目单选已播节目，确认网页回看内容及时间段。刷新当前节目或遇到降档提示时，网页不得切回直播。
+- [ ] 外部播放器按官方文档和源码核对实际产物。FongMi 使用 `fongmi.json`、`fongmi.m3u` 和按日 JSON 节目单，Kodi IPTV Simple 使用 `kodi.m3u` 和 XMLTV。核对频道 ID、各自的时间占位符及 `catchup="default"` 的完整回看路径，并抽查展开后的回看首段时间。外部播放器真机试播可单独记录。参考 [FongMi 配置](https://fongmi.github.io/TV/config/) 和 [Kodi 回看配置](https://github.com/kodi-pvr/pvr.iptvsimple#catchup-format-specifiers)。
 - [ ] 跨午夜但未执行次日定时更新时，FongMi 可读上一代提前生成的当天数据；保留至少一天的未来抓取窗口。确认同时打开的网页节目单在新一代到达后刷新。
 - [ ] 在隔离测试中模拟本轮更新失败，确认 `meta.generation`、清单、EPG 和台标仍来自上一代，页面显示「上次更新失败」。成功更新后再确认各端继续可读。
 - [ ] 如需跨信任域开放，单独验收管理鉴权和媒体请求各跳目标限制。本清单不能替代访问边界验证。
