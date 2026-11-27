@@ -36,7 +36,8 @@ docs/fnos-ref/
 /fpk/app/www/VERSION
 
 # 本地开发/发布脚本（沉淀在 ~/cow/skills，不进公开仓库）
-/tools/
+/tools/*
+!/tools/build.sh
 
 # 本地构建输出（按版本分目录）
 /dist/

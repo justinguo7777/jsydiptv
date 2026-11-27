@@ -172,7 +172,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--fpk',type=Path,required=True)
     parser.add_argument('--browser',action='store_true')
-    parser.add_argument('--out',type=Path,default=ROOT/'verify/out/1.8.0')
+    parser.add_argument('--out',type=Path,help='默认写入 verify/out/<安装包版本>/')
     args=parser.parse_args()
     print('FPK SHA-256:',hashlib.sha256(args.fpk.read_bytes()).hexdigest(),flush=True)
     with tempfile.TemporaryDirectory() as d, ExitStack() as stack:
@@ -196,13 +196,15 @@ def main():
         base='http://127.0.0.1:%d'%server.server_address[1];app.Handler.base_url=base
         thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
         stack.callback(thread.join);stack.callback(server.shutdown)
-        version=(payload/'www/VERSION').read_text().strip();cfg=dict(app.DEFAULTS,district='320500',localize_logo=False)
+        version=(payload/'www/VERSION').read_text().strip()
+        out=args.out or ROOT/'verify/out'/version
+        cfg=dict(app.DEFAULTS,district='320500',localize_logo=False)
         for mode,epg in [('minimal',True),('full',True),('full',False),('minimal',False)]:
             cfg.update(output_mode=mode,epg_enable=epg);app.save_config(cfg);app.run_once(cfg,base)
             subprocess.run([sys.executable,'-B',str(ROOT/'verify/round1_api.py'),'--base-url',base,'--version',version,'--mode',mode,'--epg','on' if epg else 'off'],check=True)
         if args.browser:
             cfg.update(output_mode='minimal',epg_enable=True);app.save_config(cfg);app.run_once(cfg,base)
-            browser_checks(base,app,times,args.out,version)
+            browser_checks(base,app,times,out,version)
 
 
 if __name__=='__main__':

@@ -6,7 +6,7 @@
 
 把江苏移动电视直播变成你自己的、能长期用的 IPTV 服务
 
-[![Release](https://img.shields.io/github/v/release/justinguo7777/jsydiptv?color=blue&style=flat-square)](https://github.com/justinguo7777/jsydiptv/releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-fnOS%20%7C%20Linux-lightgrey?style=flat-square)](https://www.fnnas.com/) [![Python](https://img.shields.io/badge/python-3.8%2B-blue?style=flat-square)](https://www.python.org/) [![Deps](https://img.shields.io/badge/dependencies-zero-brightgreen?style=flat-square)](#-核心特性)
+[![Release](https://img.shields.io/github/v/release/justinguo7777/jsydiptv?color=blue&style=flat-square)](https://github.com/justinguo7777/jsydiptv/releases) [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/platform-fnOS-lightgrey?style=flat-square)](https://www.fnnas.com/) [![Python](https://img.shields.io/badge/python-3.8%2B-blue?style=flat-square)](https://www.python.org/)
 
 **江苏移动 IPTV 直播与回看 · 4K 实测标注 · 每天自动更新**
 
@@ -35,15 +35,15 @@
 | | |
 |---|---|
 | 🎯 **不用账号密码** | 数据走移动 OTT 的 `lvps` 接口，按来源 IP 放行，只要在江苏移动网络下 |
-| 📺 **全量频道** | 江苏 13 地市聚合去重，实测约 **277 个频道**，频道数随上游变化 |
-| ⏪ **回看能用** | **251 个频道支持回看**，按各播放器语法分别产出，不再出现"点了还是直播" |
+| 📺 **全量频道** | 江苏 13 地市聚合去重，`v1.7.3` 全省验收时约 **277 个频道**；以当前生成结果为准 |
+| ⏪ **回看能用** | `v1.7.3` 验收样本有 **251 个带回看模板的频道**；实际可回看范围由运营商决定 |
 | 📅 **节目单** | 默认采集过去 7 天和未来 3 天。不同导出格式的节目单覆盖范围见下文 |
 | 🔍 **4K 不虚标** | 只有实测宽高达到 3840×2160 才标真 4K；探测不到则标为待探测 |
 | 🗂️ **智能分组** | 不再有"其他"大杂烩，按内容细分成 11 组，另有按机顶盒上游分组重建的清单 |
-| 🖼️ **台标本地化** | 抓回 NAS 本地、哈希命名，不依赖外网、不掉图 |
+| 🖼️ **台标本地化** | 可以将可下载的台标缓存到 NAS；效果取决于台标源和当前配置 |
 | 🔄 **定时更新** | 默认每天 03:30 自动刷新，可在应用设置里改 |
 | ✅ **自检与原子发布** | 抽样检查直播清单、校验整代文件并扫描文本隐私字段；通过后一次切换，失败保留上一代 |
-| 📦 **零第三方依赖** | 服务端纯标准库，Python 3.8+，装完就能跑 |
+| 📦 **无需安装 Python 第三方包** | 服务端用 Python 3.8+ 标准库；网页内置 hls.js |
 
 ---
 
@@ -51,14 +51,14 @@
 
 ## 🚀 快速开始
 
-**前提**：一台装了飞牛 fnOS 的 NAS，且处在江苏移动宽带网络下。
+**前提**：飞牛 fnOS **1.1.3100 或更高版本**、设备上可用的 Python 3.8+，并处在能访问江苏移动 IPTV 源的网络。
 
 1. 到 [Releases](https://github.com/justinguo7777/jsydiptv/releases) 下载最新的 `jsydiptv-x.y.z.fpk`
 2. 飞牛「应用中心」→ 左下角「手动安装」→ 选择该 fpk
 3. 向导里**只需填服务端口**（默认 `18123`），点完成
-4. 浏览器打开 `http://<NAS-IP>:18123` 看频道列表，再到「订阅」页复制地址填进播放器
+4. 浏览器打开 `http://<NAS-IP>:<安装端口>`（默认 `18123`） 看频道列表，再到「订阅」页复制地址填进播放器
 
-> 装好后在「应用设置」里可调：地市、每天更新时间、节目单天数、输出模式等。
+> 网页「设置」可调自动更新、输出模式和节目单开关；地市、节目单采集天数和回看天数等在飞牛「应用设置」调整。
 > 无历史产物时，首次启动先开放网页服务，再在后台更新，耗时取决于网络与节目量。已有产物的升级会沿用旧清单，直到下一次成功更新。
 
 > ⚠️ **建议不要改端口**：服务会跟着切，但 fnOS 桌面入口在安装时固定，改端口后图标打不开（需重装一次让入口重新注册）。
@@ -69,14 +69,14 @@
 
 ## 📋 两套清单，按需选择
 
-本应用同时产出**两套互不影响的清单**，装好后都在「订阅」页能看到地址：
+本应用同时产出**同一批数据的两套分组视图**，装好后都在「订阅」页能看到地址：
 
 | | 智能分组清单（默认推荐） | 原版清单 |
 |---|---|---|
-| 文件 | `iptv.m3u8` / `kodi.m3u` / `fongmi.m3u` | `orig.m3u8` |
+| 文件 | `iptv.m3u8` / `kodi.m3u` / `fongmi.m3u` | `orig.m3u8` / `orig_epg.xml` / `orig.json` |
 | 分组 | 按内容细分：4K / 央视 / 卫视 / 江苏 / 地方(按市) / 影视剧场 / 少儿动画 / 体育竞技 / 生活纪录 / 音乐广播 / 购物 | **按机顶盒电视墙上游 11 组重建**（超高清/央视/本地/卫视/体育/专业频道/影视/少儿/生活/广播/购物） |
 | 4K | 真 4K 和高清臻享同组置顶，同台优先保留实测 4K | 沿用上游「超高清」组，同组同台优先保留实测 4K |
-| 适合 | 想直接能用的、讨厌台乱混在一起的 | 习惯机顶盒那套分组顺序的 |
+| 适合 | 想直接能用的、讨厌台乱混在一起的 | 习惯机顶盒分组的；保留上游组归属，不保证与机顶盒排序完全相同 |
 
 > 想看**上游电视墙的分组方式**就用原版清单；想**分类清楚好找台**就用智能分组清单。
 
@@ -95,12 +95,12 @@
 | DIYP | `http://<NAS>:18123/iptv.m3u8` + EPG `http://<NAS>:18123/epg.xml` | ✅ |
 | Kodi PVR | `http://<NAS>:18123/kodi.m3u` + EPG `http://<NAS>:18123/epg.xml` | ✅ |
 | 天光云影 | `http://<NAS>:18123/iptv.m3u8` | ❌ |
-| 4K 清单 | `http://<NAS>:18123/4k.json` | — |
+| 4K 分组索引（JSON，不是播放器清单） | `http://<NAS>:18123/4k.json` | — |
 | **原版清单** | `http://<NAS>:18123/orig.m3u8` + `http://<NAS>:18123/orig_epg.xml` | ✅ |
 
 ### ⚠️ 回看语法：填错就没有回看
 
-不同播放器的回看占位符**互不兼容**，这是最容易踩的坑（以下结论均来自各播放器**源码**，不是猜的）：
+不同播放器的回看占位符**互不兼容**，这是最容易踩的坑。下表说明项目输出的语法与建议接入方式，不代表所有客户端版本都已实机验证：
 
 | 文件 | 占位符语法 | 适用 |
 |---|---|---|
@@ -121,8 +121,8 @@
 ### 输出模式与节目单
 
 - 精简和完整模式均提供通用 M3U、Kodi、FongMi、TVBox、XMLTV 与原版分组三件套。完整模式额外输出 TXT、CSV 等格式。
-- XMLTV 导出覆盖前 5 天至次日。FongMi 一条通的按日 JSON 覆盖当天及配置范围内的未来日期，历史节目可使用 XMLTV 清单查看。保留至少一天的未来抓取窗口，可在午夜到次日更新之间延续当天节目单。
-- 关闭 EPG 后，从**下一次成功更新**开始不抓取节目；节目单地址仍可读取空表，播放器配置不再附带 EPG 地址。直播和支持回看的清单仍可用，但网页节目单不会显示可点选的回看节目。
+- 启用 EPG 时，XMLTV 最多覆盖前 5 天至次日，以实际取得的数据为准。FongMi 一条通的按日 JSON 覆盖当天及配置范围内的未来日期，历史节目可使用 XMLTV 清单查看。保留至少一天的未来抓取窗口，可在午夜到次日更新之间延续当天节目单。
+- 关闭 EPG 后，从**下一次成功更新**开始不抓取节目；XMLTV 保留频道条目但不包含节目；不再为 FongMi 生成按日 JSON 或附带 EPG 地址。直播和支持回看的清单仍可用，但网页节目单不会显示可点选的回看节目。
 
 <details>
 <summary>查看 1.7.3 设置页</summary>
@@ -133,7 +133,7 @@
 
 ## 📖 关于 4K 频道
 
-- 4K 组包含两类：**真 4K**（实测 3840×2160）与「**高清臻享**」（运营商高码率档）。
+- 4K 分组包含实测的 **真 4K**、运营商「**高清臻享**」及待探测候选。`4k.json` 中 `real_4k: true` 才是实测真 4K。
 - 每次更新都会实拉切片解析 SPS 拿真实分辨率：探测不到时标「待探测」；真 4K 打蓝色「4K」徽标，实测只有 1080P 的臻享档打紫色「臻享」徽标并注明真实分辨率，**不谎报为 4K**。
 - 同一频道有多路高画质档时，4K 组只保留一条，优先选实测真 4K。此次全省抽测为 14 台真 4K、6 台 1080p 臻享。频道数和编码会随上游变化。
 - 4K 组内 CCTV 台置顶并按台号升序（CCTV-1 4K → CCTV-16 4K → 央视4K → 各卫视 4K）。
@@ -178,7 +178,7 @@
 2. **回看已过期**。运营商只保留约 7 天，更早的节目点了没用
 3. **不在江苏移动网络下**。直播源按来源 IP 放行，换了网络就播不了
 
-本项目 1.7.1 起已修正 `catchup` 模式错误（append → default），早期版本必然没回看，建议升级。
+`1.7.1` 起把回看模板改为 `catchup="default"`，以匹配与直播不同的回看路径。
 </details>
 
 <details>
@@ -211,76 +211,17 @@
 
 - 直播源按**来源 IP** 放行，**必须在江苏移动网络下**才能播放
 - 回看约 7 天，超期由运营商侧失效
-- 不含任何账号、令牌、MAC、机顶盒绑定信息（发布前 4 类规则强制扫描）
-- 服务监听 `0.0.0.0`，请在受信任的局域网使用
+- 更新时检查生成的文本产物是否含已知敏感字段；这不等同于对源码或安装包做安全审计
+- 服务监听 `0.0.0.0`，未内置访问鉴权，请仅在受信任的局域网使用，不要直接发布到公网
 - 仅供个人自用，请勿大规模传播（CDN 有并发限制）
 
 ---
 
 ## 🛠️ 开发
 
-数据来源与接口参数见 [历史开发报告](docs/history/development-report.md)，要点：
-
-```
-EPG_BASE = http://lvpepg.uni.jsa.bcs.ottcn.com:8080/cms-lvp-epg
-channelList          ?assortId=115&serviceChannelId=&abilityString={编码后JSON}
-getOpenNewAssortment ?serviceChannelId=&abilityString=...
-getAllProgramlist    ?startDate&endDate&pos=fullplayer&allDay=true&uuid=...
-abilityString        {"deviceGroupIds":["1697"],"districtCode":"320000"}
-UA                   okhttp/3.12.0
-```
-
-地址模板：
-
-```
-live  = {cdn}/{cp}/live1/{code}/{code}/1.m3u8
-back  = {cdn}/{cp}/lookback/{code}/{code}?playseek={start}-{end}
-```
-
-E2E 回看验证：
-
-```bash
-# 用清单里的模板生成地址后，直接探测时长是否等于节目时长
-ffprobe -v error -show_entries format=duration -of csv=p=0 "<回看地址>"
-```
-
-### 源码结构
-
-```
-fpk/
-├── manifest          # 应用元信息
-├── ICON.PNG          # 64x64 包图标
-├── ICON_256.PNG      # 256x256 包图标
-├── app/
-│   ├── server/       # server.py（HTTP + 抓取 + 生成）、media_probe.py（TS 解析）
-│   ├── www/          # index.html、workspace.css、workspace.js、hls.min.js
-│   └── ui/           # 桌面入口配置与图标
-├── cmd/              # start/stop/status、安装与配置回调
-├── config/           # privilege、resource
-└── wizard/           # 安装向导表单
-```
-
-### 打包
-
-根层必须是 **4 个文件（`ICON.PNG` `ICON_256.PNG` `app.tgz` `manifest`）+ 3 个目录（`cmd` `config` `wizard`）**：
-
-在仓库根目录运行：
-
-```bash
-bash tools/build.sh
-```
-
-安装包和构建指纹位于 `dist/<版本号>/`。
-
-权限：`manifest` / 图标 644，`cmd/` `wizard/` `config/` 目录 755，`cmd/*` 脚本 755。
-
-### 验收脚本
-
-```bash
-python3 -B -m unittest discover -s verify -p 'test_*.py'
-python3 -B verify/round1_api.py --base-url http://127.0.0.1:18123 --version 1.7.3 --mode minimal --epg on
-# verify/round2_ui.js 在浏览器控制台执行
-```
+- [开发与打包](docs/development.md)：源码结构、构建命令与依赖。
+- [回归验收清单](docs/verification.md)：离线测试、飞牛装机与播放器验证。
+- 已发布版本请以 [GitHub Releases](https://github.com/justinguo7777/jsydiptv/releases) 的安装包和说明为准。
 
 ---
 
@@ -308,20 +249,10 @@ python3 -B verify/round1_api.py --base-url http://127.0.0.1:18123 --version 1.7.
 ## 🙏 致谢
 
 - 感谢恩山 **lff520520** 提供思路和实现方案：[原贴地址](https://www.right.com.cn/forum/thread-8499027-1-2.html)
-- 上游血统来自 TVBox 系与 FongMi TV 专版两套外围包的分组与产物结构调研，详见 [上游对照](docs/history/upstream-comparison.md)
+- 分组与订阅格式参考了 TVBox 系和 FongMi TV 相关实现。
 
 ## License
 
-本项目采用 [MIT License](LICENSE)。
+项目源码采用 [MIT License](LICENSE)。随附的 [hls.js](third-party/hls.js/README.md) 使用独立的 Apache-2.0 许可。
 
-<div align="center">
-
-**仅供个人学习与自用，请勿用于商业用途或大规模传播**
-
-</div>
-## 本地开发
-
-- `fpk/`：应用源码、图标和 fnOS 向导。
-- `verify/`：API、界面和离线回归脚本；装机见 [验收清单](docs/verification.md)。
-- `docs/`：项目文档与图片；[1.8.0 改造记录](docs/workspace-1.8.0.md) 包含功能优先级和目录迁移。
-- 构建与验收分别见上面的「打包」和「验收脚本」。
+软件许可不授予任何节目或直播流的使用或转播权。请遵守运营商条款及适用规定。

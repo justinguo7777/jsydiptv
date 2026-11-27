@@ -4,7 +4,9 @@
 
 ## A. 源码（本地、离线）
 
-- [ ] `fpk/manifest` 的版本和更新说明符合本次候选版本；`fpk/wizard/install` 只需 `wizard_port`，地市等由应用设置配置。
+构建依赖见 [开发与打包](development.md)。使用 `--browser` 前安装 Playwright 与 Chromium（`python3 -m pip install playwright`、`python3 -m playwright install chromium`）。
+
+- [ ] `fpk/manifest` 的版本和更新说明符合本次候选版本；`fpk/wizard/install` 只需 `wizard_port`，地市等由飞牛应用设置配置。
 - [ ] JSON 配置可解析，UI 入口引用的向导字段存在；Python、fnOS Shell 回调及前端 JavaScript 语法检查通过。
 - [ ] 离线回归通过：`python3 -B -m unittest discover -s verify -p 'test_*.py'`。不连接 IPTV 或修改现有服务。
 
@@ -13,7 +15,7 @@
 ## B. 安装包与构建指纹
 
 - [ ] 在干净、独立的构建目录打包。根层为 `ICON.PNG`、`ICON_256.PNG`、`manifest`、`app.tgz`、`cmd/`、`config/`、`wizard/`；`app.tgz` 根层是 `server/`、`ui/`、`www/`，不套 `app/`，不包含缓存或运行日志。
-- [ ] 对照构建提交逐字节核对包内文件；生成的 `www/VERSION` 等于 manifest 版本。检查图标、向导、回调及权限。
+- [ ] 对照构建提交逐字节核对包内文件；生成的 `www/VERSION` 等于 manifest 版本。检查图标、许可文件、向导、回调及权限。
 - [ ] 实算 `sha256sum "$TEST_FPK"`，与同批 `build.json` 相符；将 SHA-256、版本、Commit、测试机版本和日期写入验收记录。同一 SHA-256 贯穿装机、实播和发布；重打包后重新核对。
 
 ## C. 安装、升级与生命周期
