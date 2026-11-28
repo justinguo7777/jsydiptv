@@ -14,7 +14,7 @@
 
 </div>
 
-![1.7.3 观看页示例](docs/screenshot.png)
+![1.7.4 观看页示例](docs/screenshot.png)
 
 ---
 
@@ -108,17 +108,17 @@
 
 | 文件 | 占位符语法 | 适用 |
 |---|---|---|
-| `iptv.m3u8`<br>`fongmi.m3u`<br>`orig.m3u8` | `${(b)yyyyMMddHHmmss}` / `${(e)yyyyMMddHHmmss}` | **APTV、FongMi、酷9、mytv-android、DIYP、TVBox** 及多数通用播放器 |
-| `kodi.m3u` | `${start:YmdHMS}` / `${end:YmdHMS}` | **仅 Kodi**（PVR IPTV Simple Client） |
+| `iptv.m3u8`<br>`fongmi.m3u`<br>`orig.m3u8`<br>`mine.m3u8`<br>`mine_fongmi.m3u` | `${(b)yyyyMMddHHmmss}` / `${(e)yyyyMMddHHmmss}` | **APTV、FongMi、酷9、mytv-android、DIYP、TVBox** 及多数通用播放器 |
+| `kodi.m3u`<br>`mine_kodi.m3u` | `${start:YmdHMS}` / `${end:YmdHMS}` | **仅 Kodi**（PVR IPTV Simple Client） |
 
 **两个必须知道的细节**：
 
 - **Kodi 的格式参数不能省**。写成 `${start}` 会变成整数时间戳（如 `1795610700`），源站不认，表现就是「点了回看还是直播」。
-- **`fongmi.json` 会引用 `fongmi.m3u` 和按日节目单**。Kodi 应使用自己的清单和 XMLTV，并在 IPTV Simple 中启用回看。两者的回看时间默认使用播放设备的系统时区，请设置为 `Asia/Shanghai`。[FongMi 配置](https://fongmi.github.io/TV/config/) · [Kodi IPTV Simple](https://github.com/kodi-pvr/pvr.iptvsimple#catchup)
+- **`fongmi.json` 提供智能、原版、自定义三套直播入口，并在启用 EPG 时提供按日节目单地址**。Kodi 应使用自己的清单和 XMLTV，并在 IPTV Simple 中启用回看。两者的回看时间默认使用播放设备的系统时区，请设置为 `Asia/Shanghai`。[FongMi 配置](https://fongmi.github.io/TV/config/) · [Kodi IPTV Simple](https://github.com/kodi-pvr/pvr.iptvsimple#catchup)
 
 > 另外：**酷9 的 EPG「解析格式」必须手动改成 XmlTV**（默认是 DIYP），否则节目单一直空着。
 
-![1.7.3 订阅页示例](docs/screenshot-player.png)
+![1.7.4 订阅页示例](docs/screenshot-player.png)
 
 ---
 
@@ -129,9 +129,9 @@
 - 关闭 EPG 后，从**下一次成功更新**开始不抓取节目；XMLTV 保留频道条目但不包含节目；不再为 FongMi 生成按日 JSON 或附带 EPG 地址。直播和支持回看的清单仍可用，但网页节目单不会显示可点选的回看节目。
 
 <details>
-<summary>查看 1.7.3 设置页</summary>
+<summary>查看 1.7.4 设置页</summary>
 
-![1.7.3 设置页示例](docs/screenshot-settings.png)
+![1.7.4 设置页示例](docs/screenshot-settings.png)
 
 </details>
 

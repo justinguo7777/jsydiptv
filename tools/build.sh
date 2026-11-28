@@ -163,6 +163,7 @@ install -m 644 "$FPK/ICON_256.PNG" "$BUILD/src/www/app-logo.png" || exit 1
 install -d -m 755 "$BUILD/src/www/licenses/hls.js" || exit 1
 install -m 644 LICENSE "$BUILD/src/www/licenses/jsydiptv-MIT.txt" || exit 1
 install -m 644 third-party/hls.js/LICENSE "$BUILD/src/www/licenses/hls.js/LICENSE" || exit 1
+install -m 644 third-party/hls.js/Apache-2.0.txt "$BUILD/src/www/licenses/hls.js/Apache-2.0.txt" || exit 1
 install -m 644 third-party/hls.js/README.md "$BUILD/src/www/licenses/hls.js/README.md" || exit 1
 
 # ⚠️ app.tgz 顶层必须直接是 server/ ui/ www/，不能套一层 app/
@@ -221,7 +222,7 @@ diff -q "$CHK/manifest" "$FPK/manifest" >/dev/null 2>&1 || { bad "包内 manifes
 APP_LIST=$(tar tzf "$BUILD/app.tgz")
 FPK_LIST=$(tar tzf "$OUT")
 miss=0
-for f in server/server.py server/media_probe.py www/index.html www/workspace.css www/workspace.js www/hls.min.js www/app-logo.png www/VERSION www/licenses/jsydiptv-MIT.txt www/licenses/hls.js/LICENSE www/licenses/hls.js/README.md ui/config ui/images/icon_64.png ui/images/icon_256.png; do
+for f in server/server.py server/media_probe.py www/index.html www/workspace.css www/workspace.js www/hls.min.js www/app-logo.png www/VERSION www/licenses/jsydiptv-MIT.txt www/licenses/hls.js/LICENSE www/licenses/hls.js/Apache-2.0.txt www/licenses/hls.js/README.md ui/config ui/images/icon_64.png ui/images/icon_256.png; do
     grep -qx "$f" <<< "$APP_LIST" || { bad "app.tgz 缺 $f"; miss=1; }
 done
 for f in wizard/install wizard/config manifest ICON.PNG ICON_256.PNG; do

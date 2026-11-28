@@ -188,6 +188,15 @@ def main():
             live == by_id[uid]["live"] and supported == bool(by_id[uid]["catchup"])
             for (_, uid, live), supported in orig_list.items()))
         playlist("/orig.m3u8", orig_list, AP, meta["backup_days"])
+        mine = get("/mine.json")
+        mine_list = {(g["name"], str(c["uuid"]), c["live"]): bool(c["back"])
+                     for g in mine["groups"] for c in g["channels"]}
+        ck("自定义清单与主频道 ID、直播和回看能力一致（允许跨组重复）",
+           sum(len(g["channels"]) for g in mine["groups"]) == len(mine_list) == mine["total_entries"]
+           and all(uid in by_id and live == by_id[uid]["live"] and supported == bool(by_id[uid]["catchup"])
+                   for (_, uid, live), supported in mine_list.items()))
+        for path, tokens in (("/mine.m3u8", AP), ("/mine_kodi.m3u", KODI), ("/mine_fongmi.m3u", AP)):
+            playlist(path, mine_list, tokens, meta["backup_days"])
         main_epg = xmltv("/epg.xml", set(by_id))
         xmltv("/orig_epg.xml", orig_ids)
         ck("XMLTV 节目数与 meta.epg_programs 一致", len(main_epg) == meta["epg_programs"], len(main_epg))
@@ -195,6 +204,10 @@ def main():
         fongmi = get("/fongmi.json")
         tvbox = get("/tvbox.json")
         day_template = "/epg/{id}/{date}.json"
+        fongmi_paths = ("/fongmi.m3u", "/orig.m3u8", "/mine_fongmi.m3u")
+        ck("FongMi 三套直播入口及顺序正确", len(fongmi["lives"]) == len(fongmi_paths)
+           and all(item.get("type") == 0 and serves(item.get("url"), path)
+                   for item, path in zip(fongmi["lives"], fongmi_paths)))
         for name, doc, list_path, epg_path in (
             ("FongMi", fongmi, "/fongmi.m3u", day_template), ("TVBox", tvbox, "/iptv.m3u8", "/epg.xml"),
         ):
