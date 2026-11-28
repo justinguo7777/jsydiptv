@@ -592,7 +592,7 @@ function renderLayout(){
   }
   // 命中数由服务端按已保存的布局算；本地改动未保存时不能拿旧数字冒充
   const live=n=>(layoutData.groups||[]).find(x=>x.title===n)?.hits||0;
-  $('#ldHit').textContent=g?(layoutDirty?'改动未保存，保存后重新统计命中':`该分组当前命中 ${live(g.title)} 台`):'';
+  $('#ldHit').textContent=g?(layoutDirty?`预计命中 ${live(g.title)} 台（未保存）`:`当前命中 ${live(g.title)} 台`):'';
   const addr=$('#mineAddr');
   const meta=statusData?.meta||{};
   addr.value=Number(meta.channels)>0?location.origin+'/mine.m3u8':'';
@@ -612,12 +612,27 @@ async function loadLayout(){
   } catch(e){layoutNotice('读取自定义分组失败：'+e.message,'error');}
 }
 function recountLayout(){
+  // 草稿阶段的命中数在本地算：命中规则与频道都已在内存里，不必等服务端。
   if(!layoutData)return;
-  request('/api/layout').then(d=>{
-    const prev=layoutSel;
-    layoutData=Object.assign({},layoutData,{groups:d.groups,stats:d.stats});
-    layoutSel=prev;renderLayout();
-  }).catch(()=>{});
+  const rows=channels.length?channels:[];
+  if(!rows.length)return;
+  const hits={};
+  for(const c of rows){
+    const g=layoutData.layout.groups.find(g=>g.rules.some(r=>matchRule(c,r)));
+    if(g)hits[g.title]=(hits[g.title]||0)+1;
+  }
+  layoutData.groups=(layoutData.groups||[]).map(x=>({...x,hits:hits[x.title]||0}));
+  renderLayout();
+}
+// 与服务端 _mine_match 同语义，用于草稿阶段预估；最终以生成结果为准。
+function matchRule(c,r){
+  if(r.type==='channel')return c.uuid===r.uuid;
+  if(r.type==='orig_group')return (c.otypes||[]).includes(r.value);
+  if(r.type==='flag')return r.flag==='is_4k'?!!c.is_4k:r.flag==='zhx'?!!c.zhx:(c.back||0)>0;
+  const src=r.field==='name'?(c.name||''):String(c.num??'');
+  if(r.op==='contains')return src.includes(r.value);
+  if(r.op==='equals')return src===r.value;
+  try{return new RegExp(r.value).test(src);}catch{return false;}
 }
 $('#btnAddGroup').onclick=()=>{
   if(!layoutData)return;
@@ -640,11 +655,11 @@ $('#ldName').oninput=e=>{
   const g=layoutData?.layout.groups.find(x=>x.id===layoutSel);if(!g)return;
   const v=e.target.value.slice(0,layoutData.limit.title);
   if(e.target.value!==v)e.target.value=v;
-  g.title=v;layoutDirty=true;markLayoutDirty();
+  g.title=v;layoutDirty=true;markLayoutDirty();recountLayout();
   const li=$('#layoutGroupList').querySelector(`[data-id="${g.id}"] b`);if(li)li.textContent=v||'（未命名）';
   $('#ldTitle').textContent=v||'（未命名）';
 };
-$('#ldMulti').onchange=e=>{const g=layoutData?.layout.groups.find(x=>x.id===layoutSel);if(!g)return;g.multi=e.target.checked;layoutDirty=true;renderLayout();markLayoutDirty();recountLayout();};
+$('#ldMulti').onchange=e=>{const g=layoutData?.layout.groups.find(x=>x.id===layoutSel);if(!g)return;g.multi=e.target.checked;layoutDirty=true;renderLayout();markLayoutDirty();};
 $('#btnAddRule').onclick=()=>{
   const g=layoutData?.layout.groups.find(x=>x.id===layoutSel);if(!g)return;
   const type=$('#ruleType').value, raw=$('#ruleValue').value.trim();

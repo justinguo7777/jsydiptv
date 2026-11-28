@@ -193,9 +193,9 @@ def browser_checks(base, app, fixture, out, version):
         click('#btnAddRule')
         expect(at('#ldRuleList .rule-row')).not_to_have_count(0)
         capture('settings-layout')
-        expect(at('#ldHit')).to_contain_text('改动未保存')
+        expect(at('#ldHit')).to_contain_text('预计命中')
         click('#btnSaveLayout');text('#layoutMsg','已保存，下次成功更新后生效')
-        expect(at('#ldHit')).to_contain_text('命中 3 台')
+        expect(at('#ldHit')).to_contain_text('当前命中 3 台')
         saved=app.load_layout()
         titles=[g['title'] for g in saved['groups']]
         assert '我的常看' in titles,titles
