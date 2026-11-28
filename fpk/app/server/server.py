@@ -2029,11 +2029,12 @@ def _prepare_generation(build, previous, cfg, base_url, cdn, chs, prs, detail, e
             json.dump(member, f, ensure_ascii=False)
     except Exception as e:      # noqa: BLE001
         log("[自定义分组] 归属表写入失败: %s" % e)
-    mine_entries, mine_stats = apply_mine_layout(original, layout, member)
+    # 自定义清单与网页共用去重后的频道及 XMLTV ID，上游归属仍取原始映射。
+    mine_entries, mine_stats = apply_mine_layout(chs, layout, member)
     if not mine_entries:
         # 配置把频道全隐藏了：不阻断更新，回退成原版分组并留痕
         layout_used = seed_layout(original)
-        mine_entries, mine_stats = apply_mine_layout(original, layout_used, member)
+        mine_entries, mine_stats = apply_mine_layout(chs, layout_used, member)
         mine_state = "fallback:empty"
         log("[自定义分组] 配置求值为空，已回退原版分组")
     else:

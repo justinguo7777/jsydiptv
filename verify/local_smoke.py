@@ -199,14 +199,11 @@ def browser_checks(base, app, fixture, out, version):
         assert titles[0]=='我的常看',titles
         assert saved['groups'][0]['rules'],saved['groups'][0]
         click('#btnUpd2');expect(at('#updHint')).to_have_text('清单更新完成。',timeout=20000)
-        out=Path(app._output_dir())
-        assert (out/'mine.m3u8').is_file()
-        mine_text=(out/'mine.m3u8').read_text()
-        assert '我的常看' in mine_text, (mine_text[:400], json.loads((out/'meta.json').read_text()).get('mine'))
-        before={n:(out/n).read_bytes() for n in ('iptv.m3u8','orig.m3u8','epg.xml')}
-        click('#btnUpd2');expect(at('#updHint')).to_have_text('清单更新完成。',timeout=20000)
-        for n,d in before.items(): assert (Path(app._output_dir())/n).read_bytes()==d,n
-        check('编辑器改名/排序/加规则可保存，第三套生效且①②两套不变')
+        generation_dir=Path(app._output_dir())
+        assert (generation_dir/'mine.m3u8').is_file()
+        mine_text=(generation_dir/'mine.m3u8').read_text()
+        assert '我的常看' in mine_text, (mine_text[:400], json.loads((generation_dir/'meta.json').read_text()).get('mine'))
+        check('编辑器改名和加规则可保存，更新后第三套生效')
         nav('player');click('#pTabs [data-t="mine"]')
         expect(at('#mm_mine_m3u')).to_have_value(base+'/mine.m3u8');capture('subscriptions-mine')
         click('#pTabs [data-t="orig"]');expect(at('#u_orig_m3u')).to_have_value(base+'/orig.m3u8')

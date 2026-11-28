@@ -164,6 +164,12 @@ class Generations(unittest.TestCase):
         self.assertEqual(groups['超高清'], {'4k','zx','plus'})
         self.assertTrue({'hd','sd'} <= groups['央视'])
         self.assertIn('sd', {p.attrib['channel'] for p in ET.parse(out/'orig_epg.xml').findall('programme')})
+        mine = json.loads((out/'mine.json').read_text())
+        mine_ids = {c['uuid'] for g in mine['groups'] for c in g['channels']}
+        guide_ids = {c.attrib['id'] for c in ET.parse(out/'epg.xml').findall('channel')}
+        self.assertEqual(mine_ids, set(by_id))
+        self.assertEqual(mine_ids, guide_ids)
+        self.assertNotIn('sd', mine_ids)
 
 
 class MineLayout(unittest.TestCase):
