@@ -164,6 +164,60 @@ def browser_checks(base, app, fixture, out, version):
         embed.locator('iframe').screenshot(path=str(out/'fnos-window.png'),animations='disabled')
         embed.close()
         check('模拟 fnOS iframe 动态宽度 820/640/420，三页可切换且无横向溢出')
+        # —— 三套分组方案与第三套编辑器（本次新增）
+        page.unroute('**/api/channels*')
+        nav('live');click('#allChannels')
+        expect(at('.vbtn')).to_have_count(3)
+        expect(at('.vbtn.on')).to_have_attribute('data-view','smart')
+        smart_groups=[g for g in at('#liveList .gh b').all_text_contents()]
+        click('[data-view="orig"]');page.wait_for_timeout(600)
+        expect(at('.vbtn.on')).to_have_attribute('data-view','orig')
+        orig_groups=[g for g in at('#liveList .gh b').all_text_contents()]
+        assert smart_groups!=orig_groups,(smart_groups,orig_groups)
+        click('[data-view="mine"]');page.wait_for_timeout(600)
+        expect(at('#viewHint')).to_contain_text('自定义')
+        mine_groups=[g for g in at('#liveList .gh b').all_text_contents()]
+        click('[data-view="smart"]');page.wait_for_timeout(400)
+        check('首页三套分组方案可切换，组名/组序随之变化')
+        nav('sched');expect(at('#layoutSection')).to_be_visible()
+        expect(at('#layoutGroupList .lg-item')).not_to_have_count(0)
+        first=at('#layoutGroupList .lg-item').first
+        first.locator('.lg-pick').click()
+        expect(at('#ldName')).not_to_have_value('')
+        at('#ldName').fill('我的常看');text('#layoutMsg','尚未保存')
+        click('#ldTitle')
+        at('#layoutGroupList .lg-item').first.locator('[data-down]').click()
+        at('#ldName').fill('我的常看')
+        # 用「可回看」这条无参数规则，保证在 3 台夹具里必命中
+        at('#ruleType').select_option('flag_back')
+        click('#btnAddRule')
+        expect(at('#ldRuleList .rule-row')).not_to_have_count(0)
+        capture('settings-layout')
+        expect(at('#ldHit')).to_contain_text('改动未保存')
+        click('#btnSaveLayout');text('#layoutMsg','已保存，下次成功更新后生效')
+        expect(at('#ldHit')).to_contain_text('命中 3 台')
+        saved=app.load_layout()
+        titles=[g['title'] for g in saved['groups']]
+        assert '我的常看' in titles,titles
+        # 点过「下移」，所以改名后的分组应排在第 2 位，且规则保留
+        assert titles.index('我的常看')==1,(titles,titles.index('我的常看'))
+        assert saved['groups'][1]['rules'],saved['groups'][1]
+        click('#btnUpd2');expect(at('#updHint')).to_have_text('清单更新完成。',timeout=20000)
+        out=Path(app._output_dir())
+        assert (out/'mine.m3u8').is_file()
+        mine_text=(out/'mine.m3u8').read_text()
+        assert '我的常看' in mine_text, (mine_text[:400], json.loads((out/'meta.json').read_text()).get('mine'))
+        before={n:(out/n).read_bytes() for n in ('iptv.m3u8','orig.m3u8','epg.xml')}
+        click('#btnUpd2');expect(at('#updHint')).to_have_text('清单更新完成。',timeout=20000)
+        for n,d in before.items(): assert (Path(app._output_dir())/n).read_bytes()==d,n
+        check('编辑器改名/排序/加规则可保存，第三套生效且①②两套不变')
+        nav('player');click('#pTabs [data-t="mine"]')
+        expect(at('#u_mine_m3u')).to_have_value(base+'/mine.m3u8');capture('subscriptions-mine')
+        click('#pTabs [data-t="orig"]');expect(at('#u_orig_m3u')).to_have_value(base+'/orig.m3u8')
+        check('订阅页新增「自定义」标签，三套地址齐全')
+        nav('live')
+        assert at('#liveList .lg').first.evaluate("e=>getComputedStyle(e).backgroundImage.includes('gradient')")
+        check('台标统一深色光晕底，浅色台标清晰')
         page.set_viewport_size({'width':390,'height':844});page.emulate_media(color_scheme='dark');nav('live');click('#allChannels');capture('watch-mobile-dark');nav('player');capture('subscriptions-mobile-dark');nav('sched');capture('settings-mobile-dark')
         assert not errors, errors
         browser.close()

@@ -563,7 +563,7 @@ function renderLayout(){
     li.className='lg-item'+(g.id===layoutSel?' on':'');
     li.dataset.id=g.id;
     const hits=(layoutData.groups||[]).find(x=>x.title===g.title)?.hits||0;
-    li.innerHTML=`<button class="lg-pick" type="button"><b>${esc(g.title)}</b><em>${g.rules.length} 条规则 · ${hits} 台${hits?'':' · 不进订阅'}</em>${g.multi?'<span class="u4k zhx">重叠</span>':''}</button>
+    li.innerHTML=`<button class="lg-pick" type="button"><b>${esc(g.title)}</b><em>${g.rules.length} 条规则 · ${layoutDirty?'待统计':hits+' 台'}${!layoutDirty&&!hits?' · 不进订阅':''}</em>${g.multi?'<span class="u4k zhx">重叠</span>':''}</button>
       <span class="lg-move"><button type="button" data-up="${i}" aria-label="上移 ${esc(g.title)}" ${i===0?'disabled':''}>↑</button><button type="button" data-down="${i}" aria-label="下移 ${esc(g.title)}" ${i===layoutData.layout.groups.length-1?'disabled':''}>↓</button></span>`;
     li.querySelector('.lg-pick').onclick=()=>{layoutSel=g.id;renderLayout();};
     li.querySelectorAll('[data-up],[data-down]').forEach(b=>b.onclick=e=>{
@@ -590,7 +590,9 @@ function renderLayout(){
     row.querySelector('button').onclick=()=>{g.rules.splice(i,1);layoutDirty=true;renderLayout();markLayoutDirty();recountLayout();};
     rules.append(row);
   }
-  $('#ldHit').textContent=g?`该分组当前命中 ${(layoutData.groups||[]).find(x=>x.title===g.title)?.hits||0} 台`:'';
+  // 命中数由服务端按已保存的布局算；本地改动未保存时不能拿旧数字冒充
+  const live=n=>(layoutData.groups||[]).find(x=>x.title===n)?.hits||0;
+  $('#ldHit').textContent=g?(layoutDirty?'改动未保存，保存后重新统计命中':`该分组当前命中 ${live(g.title)} 台`):'';
   const addr=$('#mineAddr');
   const meta=statusData?.meta||{};
   addr.value=Number(meta.channels)>0?location.origin+'/mine.m3u8':'';
@@ -668,7 +670,7 @@ $('#btnSaveLayout').onclick=async()=>{
   try {
     await request('/api/layout',{method:'POST',body:layoutData.layout});
     layoutDirty=false;formMessage('#layoutMsg','已保存，下次成功更新后生效');
-    await loadLayout();
+    await loadLayout();renderLayout();
   } catch(e){formMessage('#layoutMsg','保存失败：'+e.message,'error');layoutNotice('保存失败：'+e.message,'error');}
   finally {layoutSaving=false;}
 };
