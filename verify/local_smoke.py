@@ -208,7 +208,7 @@ def browser_checks(base, app, fixture, out, version):
         for n,d in before.items(): assert (Path(app._output_dir())/n).read_bytes()==d,n
         check('编辑器改名/排序/加规则可保存，第三套生效且①②两套不变')
         nav('player');click('#pTabs [data-t="mine"]')
-        expect(at('#u_mine_m3u')).to_have_value(base+'/mine.m3u8');capture('subscriptions-mine')
+        expect(at('#mm_mine_m3u')).to_have_value(base+'/mine.m3u8');capture('subscriptions-mine')
         click('#pTabs [data-t="orig"]');expect(at('#u_orig_m3u')).to_have_value(base+'/orig.m3u8')
         check('订阅页新增「自定义」标签，三套地址齐全')
         nav('live')

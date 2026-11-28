@@ -531,9 +531,9 @@ function refreshLinks(){
   const hint=!ready?'清单生成后可以复制地址。':m.epg_enabled===false?'当前未生成节目单；直播订阅仍可用。':'';
   notice('#subscriptionNotice',hint);
 }
-buildCards('#pall',Object.keys(links).filter(k=>!k.startsWith('orig_')),'u_');
+buildCards('#pall',Object.keys(links).filter(k=>!k.startsWith('orig_')&&!k.startsWith('mine_')),'u_');
 buildCards('#originalLinks',['orig_m3u','orig_epg','orig_json'],'u_');
-buildCards('#mineLinks',['mine_m3u','mine_kodi','mine_fongmi','mine_json'],'u_');
+buildCards('#mineLinks',['mine_m3u','mine_kodi','mine_fongmi','mine_json'],'mm_');
 choice.onchange=()=>{save('player',choice.value);showProfile();};
 $$('#pTabs .tab').forEach(t=>t.onclick=()=>{
   $$('#pTabs .tab').forEach(b=>{b.classList.toggle('on',b===t);b.setAttribute('aria-pressed',String(b===t));});
