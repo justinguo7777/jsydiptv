@@ -212,6 +212,43 @@ def browser_checks(base, app, fixture, out, version):
         assert at('#liveList .lg').first.evaluate("e=>getComputedStyle(e).backgroundImage.includes('gradient')")
         check('台标统一深色光晕底，浅色台标清晰')
         page.set_viewport_size({'width':390,'height':844});page.emulate_media(color_scheme='dark');nav('live');click('#allChannels');capture('watch-mobile-dark');nav('player');capture('subscriptions-mobile-dark');nav('sched');capture('settings-mobile-dark')
+        phone=browser.new_page(viewport={'width':390,'height':844},has_touch=True,is_mobile=True)
+        phone.on('pageerror',lambda error: errors.append(str(error)))
+        phone.goto(base)
+        loc=phone.locator
+        loc('.nav[data-p="sched"]').tap()
+        expect(loc('.lg-item')).not_to_have_count(0)
+        loc('#btnAddGroup').tap()
+        gid=loc('.lg-item.on').get_attribute('data-id')
+        loc('#ldName').fill('手机常看')
+        loc('#ldAll').tap()
+        for uid in ('b','a'):
+            loc(f'#ldChannels [data-uuid="{uid}"] button').last.tap()
+            dialog=loc('#channelPlacement')
+            expect(dialog).to_be_visible()
+            for input_ in dialog.locator('input:checked').all(): input_.uncheck()
+            dialog.locator(f'input[value="{gid}"]').check()
+            with phone.expect_response('**/api/layout/preview') as response:
+                loc('#placementApply').tap()
+            assert response.value.ok
+        loc('#ldAll').tap()
+        expect(loc('#ldChannels li').first).to_have_attribute('data-uuid','a')
+        loc('#ldChannels [data-uuid="b"] button').first.tap()
+        expect(loc('#ldChannels li').first).to_have_attribute('data-uuid','b')
+        loc('#btnSaveLayout').tap()
+        expect(loc('#layoutMsg')).to_contain_text('已保存')
+        saved=app.load_layout()
+        assert saved['placements']=={'a':[gid],'b':[gid]}, saved
+        assert saved['groups'][0]['order']==['b','a'],saved
+        loc('#btnUpd2').tap()
+        expect(loc('#updHint')).to_have_text('清单更新完成。',timeout=20000)
+        mine=phone.request.get(base+'/mine.json').json()
+        rows=mine['groups'][0]
+        assert rows['name']=='手机常看' and [c['uuid'] for c in rows['channels']]==['b','a'],rows
+        view=phone.request.get(base+'/api/channels?view=mine').json()['channels']
+        assert [(r['group'],r['uuid']) for r in view]==[(g['name'],c['uuid']) for g in mine['groups'] for c in g['channels']]
+        phone.screenshot(path=str(out/'channel-editor-mobile.png'),animations='disabled')
+        check('手机触屏移动频道、改名、组内排序；网页与订阅结果完全一致')
         assert not errors, errors
         browser.close()
 

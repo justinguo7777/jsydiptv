@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>江苏移动 IPTV</title>
-<link rel="stylesheet" href="/workspace.css">
-<script defer src="/workspace.js"></script>
+<link rel="stylesheet" href="/workspace.css?rev=channel-editor">
+<script defer src="/workspace.js?rev=channel-editor"></script>
 </head>
 <body>
 <a class="skip" href="#main">跳到内容</a>
@@ -97,7 +97,7 @@
     </div>
     <section class="surface section layout-editor" id="layoutSection" aria-labelledby="layoutTitle">
       <div class="section-head wrap">
-        <div><h2 id="layoutTitle">自定义分组</h2><p class="muted">只改分组名与顺序，频道地址和节目单不变。保存后下次成功更新生效。</p></div>
+        <div><h2 id="layoutTitle">自定义分组</h2><p class="muted">编辑分组与频道顺序，频道地址和节目单不变。保存后下次成功更新生效。</p></div>
         <div class="layout-actions">
           <button class="btn" id="btnSeedReset" type="button">恢复上游原版</button>
           <button class="btn primary" id="btnSaveLayout" type="button">保存分组</button>
@@ -108,7 +108,7 @@
         <div class="layout-groups">
           <div class="lg-head"><h3>分组顺序</h3><button class="btn small" id="btnAddGroup" type="button">新建分组</button></div>
           <ol id="layoutGroupList" class="lg-list" aria-label="分组列表"></ol>
-          <p class="muted lg-note">空分组不会出现在订阅里。拖动或点箭头调整顺序。</p>
+          <p class="muted lg-note">空分组不会出现在订阅里。</p>
         </div>
         <div class="layout-detail" id="layoutDetail">
           <div class="ld-head">
@@ -119,6 +119,11 @@
             </div>
           </div>
           <label class="field" for="ldName">分组名<input type="text" id="ldName" maxlength="24" placeholder="例如 我的常看"></label>
+          <div class="ld-channels">
+            <div class="ld-head"><h4>频道</h4><button class="btn small" id="ldAll" type="button" aria-pressed="false">全部频道</button></div>
+            <input type="search" id="ldSearch" placeholder="搜索频道名或台号" aria-label="搜索频道">
+            <ol id="ldChannels" aria-label="频道列表"></ol>
+          </div>
           <div class="ld-rules">
             <h4>匹配规则 <span class="muted" id="ldHit"></span></h4>
             <div id="ldRuleList" class="rule-list"></div>
@@ -133,7 +138,7 @@
               <input type="text" id="ruleValue" placeholder="分组名或关键词" aria-label="规则内容">
               <button class="btn small" id="btnAddRule" type="button">添加规则</button>
             </div>
-            <p class="muted" id="ruleHint">同一频道可落入多个分组，但只有勾选「允许重叠」的分组会额外收录。</p>
+            <p class="muted" id="ruleHint">此开关仅控制规则匹配；手动选定的分组优先。</p>
           </div>
         </div>
       </div>
@@ -146,5 +151,17 @@
   </section>
 </main>
 <div id="tip" role="status"></div>
+<dialog id="channelPlacement" aria-labelledby="placementTitle">
+  <h3 id="placementTitle"></h3>
+  <div id="placementGroups" aria-label="目标分组"></div>
+  <p id="placementMsg" role="status" class="form-msg"></p>
+  <div class="layout-actions">
+    <button type="button" class="btn primary" id="placementApply">应用分组</button>
+    <button type="button" class="btn" id="placementAuto">恢复自动</button>
+    <button type="button" class="btn" id="placementOther">移到其他</button>
+    <button type="button" class="btn" id="placementHide">隐藏频道</button>
+    <form method="dialog"><button class="btn">取消</button></form>
+  </div>
+</dialog>
 </body>
 </html>

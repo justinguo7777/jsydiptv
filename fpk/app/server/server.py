@@ -1568,6 +1568,9 @@ LAYOUT_FILE_NAME = "layout.json"
 MINE_GROUP_LIMIT = 50
 MINE_TITLE_LIMIT = 24
 MINE_RULE_LIMIT = 500
+MINE_CHANNEL_LIMIT = 4096
+MINE_LAYOUT_BYTES = 262144
+MINE_OTHER_ID = ":other"
 MINE_GROUP_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 MINE_RULE_TYPES = ("channel", "orig_group", "match", "flag")
 MINE_FLAGS = ("is_4k", "back", "zhx")
@@ -1587,7 +1590,12 @@ def seed_layout(original):
         groups.append({"id": "g%d" % (i + 1), "title": gname,
                        "rules": [{"type": "orig_group", "value": gname}]})
     return {"version": 1, "seeded_from": "orig", "groups": groups,
-            "order": [], "hide": [], "renumber": False}
+            "order": [], "hide": [], "placements": {}, "renumber": False}
+
+
+def _layout_valid_uuid(value):
+    return (isinstance(value, str) and 0 < len(value) <= 64
+            and all(c.isprintable() and not c.isspace() for c in value))
 
 
 def _layout_valid_rule(r):
@@ -1624,12 +1632,12 @@ def validate_layout(layout):
         return None, "groups 必须是数组"
     if len(groups) > MINE_GROUP_LIMIT:
         return None, "分组不能超过 %d 个" % MINE_GROUP_LIMIT
-    seen, total_rules, out_groups = set(), 0, []
+    seen, total_rules, total_channel_refs, out_groups = set(), 0, 0, []
     for g in groups:
         if not isinstance(g, dict):
             return None, "分组项必须是对象"
         gid = g.get("id")
-        if not isinstance(gid, str) or not MINE_GROUP_ID_RE.match(gid):
+        if not isinstance(gid, str) or not MINE_GROUP_ID_RE.fullmatch(gid):
             return None, "分组 id 只能是字母数字下划线短横线（1-32 位）"
         if gid in seen:
             return None, "分组 id 重复：%s" % gid
@@ -1646,11 +1654,31 @@ def validate_layout(layout):
         for r in rules:
             if not _layout_valid_rule(r):
                 return None, "分组「%s」里有无效规则" % title
+        channel_order = g.get("order", [])
+        if not isinstance(channel_order, list) or not all(map(_layout_valid_uuid, channel_order)):
+            return None, "分组 order 必须是频道 UUID 数组：%s" % title
+        total_channel_refs += len(channel_order)
         total_rules += len(rules)
         out_groups.append({"id": gid, "title": title, "rules": rules,
-                           "multi": bool(g.get("multi"))})
+                           "multi": bool(g.get("multi")), "order": list(dict.fromkeys(channel_order))})
     if total_rules > MINE_RULE_LIMIT:
         return None, "规则总数不能超过 %d 条" % MINE_RULE_LIMIT
+    placements = layout.get("placements", {})
+    if not isinstance(placements, dict):
+        return None, "placements 必须是对象"
+    out_placements = {}
+    for uuid, ids in placements.items():
+        if not _layout_valid_uuid(uuid) or not isinstance(ids, list):
+            return None, "placements 必须将频道 UUID 映射到分组 id 数组"
+        if not all(isinstance(gid, str) and (gid in seen or gid == MINE_OTHER_ID) for gid in ids):
+            return None, "placements 包含不存在的分组 id"
+        ids_unique = list(dict.fromkeys(ids))
+        if MINE_OTHER_ID in ids_unique and len(ids_unique) > 1:
+            return None, "其他分组不能和自定义分组同时指定"
+        total_channel_refs += 1 + len(ids)
+        out_placements[uuid] = ids_unique
+    if total_channel_refs > MINE_CHANNEL_LIMIT:
+        return None, "频道编辑引用不能超过 %d 项" % MINE_CHANNEL_LIMIT
     hide = layout.get("hide") or []
     if not isinstance(hide, list):
         return None, "hide 必须是数组"
@@ -1667,14 +1695,15 @@ def validate_layout(layout):
             return None, "排序位次必须是正整数"
     return {"version": 1, "seeded_from": layout.get("seeded_from") or "orig",
             "groups": out_groups, "hide": hide, "order": order,
-            "renumber": bool(layout.get("renumber"))}, ""
+            "placements": out_placements, "renumber": bool(layout.get("renumber"))}, ""
 
 
 def load_layout():
     try:
         with open(_layout_path(), encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
+            layout, _err = validate_layout(json.load(f))
+            return layout
+    except (OSError, ValueError):
         return None
 
 
@@ -1711,13 +1740,13 @@ def _mine_match(ch, rule, member):
         return False
 
 
-def apply_mine_layout(channels, layout, member):
-    """求值得到 [(频道, 分组标题), ...]，顺序即输出顺序。
+def mine_buckets(channels, layout, member):
+    """按稳定的分组 ID 求值，分别返回有序分组、未分组及隐藏计数。
 
     · 分组顺序 = groups 数组顺序，未命中的频道落到末尾「其他」。
     · 一台可以多组：只有标了 multi 的分组会额外收录，且必须显式打开，
       避免出现用户没预期的重复频道。
-    · 隐藏优先于分组；全被隐藏时返回空，由调用方回退。
+    · 手工指定覆盖自动规则；空目标表示隐藏。
     """
     groups = layout.get("groups") or []
     hide = layout.get("hide") or []
@@ -1727,11 +1756,21 @@ def apply_mine_layout(channels, layout, member):
         for ch in channels:
             if _mine_match(ch, {k: v for k, v in o.items() if k != "pos"}, member):
                 pos_of.setdefault(ch["uuid"], o["pos"])
-    kept = [ch for ch in channels
-            if not any(_mine_match(ch, r, member) for r in hide)]
+    placements = layout.get("placements", {})
+    kept = [ch for ch in channels if (bool(placements[ch["uuid"]])
+            if ch["uuid"] in placements else not any(_mine_match(ch, r, member) for r in hide))]
     buckets = [[] for _ in groups]
     ungrouped = []
+    by_gid = {g["id"]: i for i, g in enumerate(groups)}
     for ch in kept:
+        ids = placements.get(ch["uuid"])
+        if ids is not None:
+            targets = [by_gid[gid] for gid in ids if gid in by_gid]
+            for i in targets:
+                buckets[i].append(ch)
+            if not targets:
+                ungrouped.append(ch)
+            continue
         hits = [i for i, g in enumerate(groups) if any(_mine_match(ch, r, member) for r in g["rules"])]
         if not hits:
             ungrouped.append(ch)
@@ -1745,9 +1784,17 @@ def apply_mine_layout(channels, layout, member):
     def num_of(ch):
         return int(re.sub(r"\D", "", str(ch.get("num", ""))) or 0)
 
-    for b in buckets:
-        b.sort(key=lambda ch: (pos_of.get(ch["uuid"], big), num_of(ch), ch.get("name", "")))
+    for g, b in zip(groups, buckets):
+        rank = {uid: i for i, uid in enumerate(g.get("order", []))}
+        b.sort(key=lambda ch: (rank.get(ch["uuid"], big), pos_of.get(ch["uuid"], big),
+                               num_of(ch), ch.get("name", "")))
     ungrouped.sort(key=lambda ch: (num_of(ch), ch.get("name", "")))
+    return buckets, ungrouped, len(channels) - len(kept)
+
+
+def apply_mine_layout(channels, layout, member):
+    groups = layout.get("groups") or []
+    buckets, ungrouped, hidden = mine_buckets(channels, layout, member)
     entries, stats = [], {"groups": 0, "entries": 0, "channels": 0, "multi": 0}
     for g, b in zip(groups, buckets):
         if not b:
@@ -1762,7 +1809,7 @@ def apply_mine_layout(channels, layout, member):
     stats["entries"] = len(entries)
     stats["channels"] = len({ch["uuid"] for ch, _t in entries})
     stats["multi"] = stats["entries"] - stats["channels"]
-    stats["hidden"] = len(channels) - len(kept)
+    stats["hidden"] = hidden
     stats["ungrouped"] = len(ungrouped)
     return entries, stats
 
@@ -2612,26 +2659,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     chs = seq
                     order = [g for _a, g in ORIG_GROUPS] + (["其他"] if missing else [])
                 else:
-                    layout = load_layout()
-                    if not isinstance(layout, dict) or not layout.get("groups"):
-                        layout = seed_layout(chs)
-                    entries, _st = apply_mine_layout(chs, layout, member)
+                    # Use the same published generation as the subscription.
+                    try:
+                        with open(os.path.join(self.output_dir, "mine.json"), encoding="utf-8") as f:
+                            published = json.load(f)["groups"]
+                    except (OSError, ValueError, KeyError):
+                        entries, _st = apply_mine_layout(chs, seed_layout(chs), member)
+                        published = [{"name": title, "channels": [ch]} for ch, title in entries]
                     by_uuid = {c["uuid"]: c for c in chs}
-                    seq, seen = [], set()
-                    for ch, title in entries:
-                        if ch["uuid"] in seen:
-                            continue
-                        seen.add(ch["uuid"])
-                        seq.append(dict(by_uuid[ch["uuid"]], group=title))
-                    for c in chs:
-                        if c["uuid"] not in seen and not any(
-                                _mine_match(c, r, member) for r in (layout.get("hide") or [])):
-                            seq.append(dict(c, group="其他"))
-                    chs = seq
-                    titles = [g["title"] for g in layout["groups"]]
-                    order = [t for t in titles if any(c["group"] == t for c in chs)]
-                    if any(c["group"] == "其他" for c in chs):
-                        order.append("其他")
+                    chs = [dict(by_uuid[c["uuid"]], group=row["name"]) for row in published
+                           for c in row["channels"] if c["uuid"] in by_uuid]
+                    order = list(dict.fromkeys(row["name"] for row in published))
             groups = {}
             for c in chs:
                 groups[c["group"]] = groups.get(c["group"], 0) + 1
@@ -2646,51 +2684,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
 
         if path == "/api/layout":
-            original = []
-            try:
-                with open(os.path.join(self.output_dir, "channels.json"), encoding="utf-8") as f:
-                    original = json.load(f)
-            except Exception:
-                self._json({"ok": False, "msg": "频道表尚未生成，请先执行一次更新"}, 404)
-                return
-            layout = load_layout()
-            seeded = False
-            if not isinstance(layout, dict) or not layout.get("groups"):
-                layout = seed_layout(original)
-                seeded = True
-            # 给界面用：每个分组当前命中几台、按什么顺序输出
-            member = {}
-            try:
-                with open(os.path.join(self.output_dir, "orig_member.json"), encoding="utf-8") as f:
-                    member = json.load(f)
-            except Exception:
-                member = {}
-            entries, stats = apply_mine_layout(original, layout, member)
-            hits = {}
-            for ch, title in entries:
-                hits[title] = hits.get(title, 0) + 1
-            # 「规则命中」与「实际收录」分开算：先命中者胜，排在后面的组可能
-            # 规则命中了却被前面的组抢走，只报一个数字会让人以为规则写错了。
-            matches = {}
-            for g in layout["groups"]:
-                matches[g["title"]] = sum(
-                    1 for c in original
-                    if not any(_mine_match(c, r, member) for r in (layout.get("hide") or []))
-                    and any(_mine_match(c, r, member) for r in g["rules"]))
-            titles = [g["title"] for g in layout["groups"]]
-            self._json({"ok": True, "layout": layout, "seeded": seeded,
-                        "stats": stats,
-                        "groups": [{"title": t, "matches": matches.get(t, 0),
-                                    "hits": hits.get(t, 0),
-                                    "in_output": hits.get(t, 0) > 0} for t in titles]
-                                  + ([{"title": "其他", "matches": stats["ungrouped"],
-                                       "hits": stats["ungrouped"],
-                                       "in_output": stats["ungrouped"] > 0}] if stats["ungrouped"] else []),
-                        "orig_groups": [g for _a, g in ORIG_GROUPS],
-                        "limit": {"groups": MINE_GROUP_LIMIT, "title": MINE_TITLE_LIMIT,
-                                  "rules": MINE_RULE_LIMIT},
-                        "outputs": {"m3u": "/mine.m3u8", "kodi": "/mine_kodi.m3u",
-                                    "fongmi": "/mine_fongmi.m3u", "json": "/mine.json"}})
+            self._layout_preview()
             return
 
         if path == "/api/epg":
@@ -2868,6 +2862,49 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         self._json({"error": "Not Found"}, 404)
 
+    def _layout_preview(self, draft=None):
+        original = []
+        try:
+            with open(os.path.join(self.output_dir, "channels.json"), encoding="utf-8") as f:
+                original = json.load(f)
+        except Exception:
+            self._json({"ok": False, "msg": "频道表尚未生成，请先执行一次更新"}, 404)
+            return
+        layout = draft if draft is not None else load_layout()
+        seeded = False
+        if not isinstance(layout, dict) or not layout.get("groups"):
+            layout = seed_layout(original)
+            seeded = True
+        # 给界面用：每个分组当前命中几台、按什么顺序输出
+        member = {}
+        try:
+            with open(os.path.join(self.output_dir, "orig_member.json"), encoding="utf-8") as f:
+                member = json.load(f)
+        except Exception:
+            member = {}
+        buckets, other, hidden = mine_buckets(original, layout, member)
+        group_rows = [{"id": g["id"], "title": g["title"], "hits": len(rows),
+                       "matches": sum(any(_mine_match(c, r, member) for r in g["rules"]) for c in original),
+                       "in_output": bool(rows), "channels": [c["uuid"] for c in rows]}
+                      for g, rows in zip(layout["groups"], buckets)]
+        if other:
+            group_rows.append({"id": MINE_OTHER_ID, "title": "其他", "matches": len(other),
+                               "hits": len(other), "in_output": True,
+                               "channels": [c["uuid"] for c in other]})
+        entries = sum(row["hits"] for row in group_rows)
+        stats = {"groups": sum(row["in_output"] for row in group_rows), "entries": entries,
+                 "channels": len(original) - hidden, "multi": entries - len(original) + hidden,
+                 "hidden": hidden, "ungrouped": len(other)}
+        self._json({"ok": True, "layout": layout, "seeded": seeded, "stats": stats,
+                    "groups": group_rows,
+                    "editor_channels": [{k: ch[k] for k in ("uuid", "name", "num")} for ch in original],
+                    "orig_groups": [g for _a, g in ORIG_GROUPS],
+                    "limit": {"groups": MINE_GROUP_LIMIT, "title": MINE_TITLE_LIMIT,
+                              "rules": MINE_RULE_LIMIT},
+                    "outputs": {"m3u": "/mine.m3u8", "kodi": "/mine_kodi.m3u",
+                                "fongmi": "/mine_fongmi.m3u", "json": "/mine.json"}})
+        return
+
     def do_POST(self):
         try:
             self._do_POST()
@@ -2910,7 +2947,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             res = do_update(cfg, self._self_base(), reason="api")
             self._json(res, 200 if res.get("ok") else 500)
             return
-        if u.path == "/api/layout":
+        if u.path in ("/api/layout", "/api/layout/preview"):
             n = int(self.headers.get("Content-Length") or 0)
             if n <= 0 or n > 262144:
                 self._json({"ok": False, "msg": "请求体为空或过大"}, 400)
@@ -2923,6 +2960,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             layout, err = validate_layout(body)
             if err:
                 self._json({"ok": False, "msg": err}, 400)
+                return
+            if u.path.endswith("/preview"):
+                self._layout_preview(layout)
                 return
             try:
                 old = load_layout()

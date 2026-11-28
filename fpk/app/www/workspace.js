@@ -175,7 +175,7 @@ async function refreshCatalog(){
 }
 function step(delta){
   const list=visibleChannels();if(!list.length)return;
-  const i=list.findIndex(c=>c.uuid===live?.uuid);
+  const i=list.findIndex(c=>c.uuid===live?.uuid&&c.group===live?.group);
   playChannel(list[i<0?(delta>0?0:list.length-1):(i+delta+list.length)%list.length]);
 }
 $('#liveQ').addEventListener('input',e=>{query=e.target.value.trim().toLowerCase();$('#liveList').scrollTop=0;renderChannels();});
@@ -545,7 +545,7 @@ $('#pg-player').addEventListener('click',e=>{const b=e.target.closest('[data-c]'
 // ---------------------------------------------------------------- 自定义分组编辑器
 // 只编辑「第三套」的展示层：分组名、组顺序、规则、重叠与隐藏。
 // 保存前不落盘；保存后下次成功更新生效，①②两套不受影响。
-let layoutData=null, layoutDirty=false, layoutSaving=false, layoutSel=null, loadedStats=false;
+let layoutData=null, layoutDirty=false, layoutSaving=false, layoutSel=null;
 const layoutNotice=(text,kind='')=>{const el=$('#layoutNotice');el.textContent=text;el.hidden=!text;el.dataset.kind=kind;};
 function ruleText(r, orig){
   if(r.type==='channel')return `指定频道 ${r.label||r.uuid.slice(0,8)}`;
@@ -562,7 +562,7 @@ function renderLayout(){
     const li=document.createElement('li');
     li.className='lg-item'+(g.id===layoutSel?' on':'');
     li.dataset.id=g.id;
-    const info=(layoutData.groups||[]).find(x=>x.title===g.title)||{};
+    const info=(layoutData.groups||[]).find(x=>x.id===g.id)||{};
     const matches=info.matches||0, hits=info.hits||0;
     const summary=layoutDirty?`${g.rules.length} 条规则`
       :hits?`${g.rules.length} 条规则 · 收录 ${hits} 台`
@@ -570,18 +570,26 @@ function renderLayout(){
       :`${g.rules.length} 条规则 · 不进订阅`;
     li.innerHTML=`<button class="lg-pick" type="button"><b>${esc(g.title)}</b><em>${summary}</em>${g.multi?'<span class="u4k zhx">重叠</span>':''}</button>
       <span class="lg-move"><button type="button" data-up="${i}" aria-label="上移 ${esc(g.title)}" ${i===0?'disabled':''}>↑</button><button type="button" data-down="${i}" aria-label="下移 ${esc(g.title)}" ${i===layoutData.layout.groups.length-1?'disabled':''}>↓</button></span>`;
-    li.querySelector('.lg-pick').onclick=()=>{layoutSel=g.id;renderLayout();};
+    li.querySelector('.lg-pick').onclick=()=>selectLayoutGroup(g.id);
+    const rename=document.createElement('button');rename.className='btn small';rename.type='button';rename.textContent='改名';
+    rename.setAttribute('aria-label','改名 '+g.title);
+    rename.onclick=()=>{selectLayoutGroup(g.id);$('#ldName').focus();$('#ldName').select();};
+    li.insertBefore(rename,li.lastElementChild);
     li.querySelectorAll('[data-up],[data-down]').forEach(b=>b.onclick=e=>{
       e.stopPropagation();
       const from=i, to=b.dataset.up!==undefined?i-1:i+1;
       if(to<0||to>=layoutData.layout.groups.length)return;
       const arr=layoutData.layout.groups,[m]=arr.splice(from,1);arr.splice(to,0,m);
-      layoutDirty=true;renderLayout();markLayoutDirty();
+      layoutDirty=true;renderLayout();markLayoutDirty();recountLayout();
     });
     list.append(li);
   });
+  const other=layoutData.groups.find(x=>x.id===otherId);
+  if(other){const li=document.createElement('li');li.className='lg-item';
+    const b=document.createElement('button');b.type='button';b.className='lg-pick';b.textContent=`其他 · ${other.hits} 台`;
+    b.onclick=()=>selectLayoutGroup(otherId);li.append(b);list.append(li);}
   const g=layoutData.layout.groups.find(x=>x.id===layoutSel);
-  $('#ldTitle').textContent=g?g.title:'选择一个分组';
+  $('#ldTitle').textContent=g?g.title:layoutSel===otherId?'其他':'选择一个分组';
   $('#ldName').value=g?g.title:'';
   $('#ldName').disabled=!g;$('#ldMulti').checked=!!g?.multi;$('#ldMulti').disabled=!g;
   $('#btnDelGroup').disabled=!g||layoutData.layout.groups.length<=1;
@@ -592,15 +600,16 @@ function renderLayout(){
   else for(const [i,r] of g.rules.entries()){
     const row=document.createElement('div');row.className='rule-row';
     row.innerHTML=`<span>${esc(ruleText(r))}</span><button class="btn small" type="button" aria-label="删除规则 ${esc(ruleText(r))}">删除</button>`;
-    row.querySelector('button').onclick=()=>{g.rules.splice(i,1);layoutDirty=true;loadedStats=false;renderLayout();markLayoutDirty();recountLayout();};
+    row.querySelector('button').onclick=()=>{g.rules.splice(i,1);layoutDirty=true;renderLayout();markLayoutDirty();recountLayout();};
     rules.append(row);
   }
   // 命中数由服务端按已保存的布局算；本地改动未保存时不能拿旧数字冒充
-  const info=g?((layoutData.groups||[]).find(x=>x.title===g.title)||{}):{};
+  const info=g?((layoutData.groups||[]).find(x=>x.id===g.id)||{}):{};
   const matches=info.matches||0, hits=info.hits||0;
   $('#ldHit').textContent=g?(layoutDirty
     ? `预计命中 ${matches} 台（未保存）`
     : `规则命中 ${matches} 台，实际收录 ${hits} 台${matches&&!hits?'（排在前面的分组已收录）':''}`):'';
+  renderEditorChannels();
   const addr=$('#mineAddr');
   const meta=statusData?.meta||{};
   addr.value=Number(meta.channels)>0?location.origin+'/mine.m3u8':'';
@@ -611,40 +620,106 @@ function markLayoutDirty(){formMessage('#layoutMsg','尚未保存');}
 async function loadLayout(){
   try {
     const data=await request('/api/layout');
-    layoutData=data;layoutDirty=false;loadedStats=true;
+    layoutData=data;layoutDirty=false;clearTimeout(previewTimer);previewSeq++;previewBusy=false;
     if(!layoutSel||!data.layout.groups.some(g=>g.id===layoutSel))layoutSel=data.layout.groups[0]?.id||null;
     const st=data.stats||{};
-    layoutNotice(data.seeded?'首次已按上游原版分组生成，可直接改名或搬频道。'
+    layoutNotice(data.seeded?'首次已按上游原版分组生成。'
       :`当前输出 ${st.entries||0} 条 / ${st.channels||0} 个频道${st.multi?`，其中 ${st.multi} 条为重叠`:''}${st.hidden?`，隐藏 ${st.hidden} 台`:''}${st.ungrouped?`，${st.ungrouped} 台落「其他」`:''}。`);
     renderLayout();
   } catch(e){layoutNotice('读取自定义分组失败：'+e.message,'error');}
 }
-function recountLayout(){
-  // 草稿阶段的命中数在本地算：命中规则与频道都已在内存里，不必等服务端。
-  // 以服务端统计为准的时刻（刚保存/刚加载）不要覆盖。
-  if(!layoutData||loadedStats)return;
-  const rows=channels.length?channels:[];
-  if(!rows.length)return;
-  const hits={}, matches={};
-  for(const c of rows){
-    for(const g of layoutData.layout.groups){
-      if(g.rules.some(r=>matchRule(c,r)))matches[g.title]=(matches[g.title]||0)+1;
-    }
-    const first=layoutData.layout.groups.find(g=>g.rules.some(r=>matchRule(c,r)));
-    if(first)hits[first.title]=(hits[first.title]||0)+1;
-  }
-  layoutData.groups=(layoutData.groups||[]).map(x=>({...x,hits:hits[x.title]||0,matches:matches[x.title]||0}));
-  renderLayout();
+let previewSeq=0, previewTimer, previewBusy=false, allEditorChannels=false, dragChannel=null;
+const otherId=':other';
+function selectLayoutGroup(id){
+  layoutSel=id;allEditorChannels=false;$('#ldSearch').value='';renderLayout();
+  if(matchMedia('(max-width:760px)').matches)$('#layoutDetail').scrollIntoView({block:'start'});
 }
-// 与服务端 _mine_match 同语义，用于草稿阶段预估；最终以生成结果为准。
-function matchRule(c,r){
-  if(r.type==='channel')return c.uuid===r.uuid;
-  if(r.type==='orig_group')return (c.otypes||[]).includes(r.value);
-  if(r.type==='flag')return r.flag==='is_4k'?!!c.is_4k:r.flag==='zhx'?!!c.zhx:(c.back||0)>0;
-  const src=r.field==='name'?(c.name||''):String(c.num??'');
-  if(r.op==='contains')return src.includes(r.value);
-  if(r.op==='equals')return src===r.value;
-  try{return new RegExp(r.value).test(src);}catch{return false;}
+function editorRows(){return layoutData?.groups.find(g=>g.id===layoutSel)?.channels||[];}
+function reorderChannel(uuid, to){
+  const group=layoutData.layout.groups.find(g=>g.id===layoutSel);
+  const rows=[...editorRows()], from=rows.indexOf(uuid);
+  if(previewBusy||!group||from<0||to<0||to>=rows.length||from===to)return;
+  rows.splice(from,1);rows.splice(to,0,uuid);group.order=rows;
+  layoutData.groups.find(g=>g.id===layoutSel).channels=rows;
+  renderEditorChannels();markLayoutDirty();recountLayout();
+}
+function editChannel(c){
+  const groups=layoutData.layout.groups, placements=layoutData.layout.placements||={};
+  const membership=layoutData.groups.filter(g=>g.channels.includes(c.uuid)).map(g=>g.id);
+  const panel=$('#channelPlacement');
+  $('#placementTitle').textContent=c.name;
+  const choices=$('#placementGroups');choices.replaceChildren();
+  for(const g of groups){
+    const label=document.createElement('label');label.className='ld-multi';
+    const box=document.createElement('input');box.type='checkbox';box.value=g.id;
+    box.checked=membership.includes(g.id);label.append(box,document.createTextNode(g.title));choices.append(label);
+  }
+  function apply(ids){
+    if(ids===null)delete placements[c.uuid];else placements[c.uuid]=ids;
+    panel.close();markLayoutDirty();recountLayout();
+  }
+  $('#placementApply').onclick=()=>{
+    const ids=[...choices.querySelectorAll(':checked')].map(b=>b.value);
+    if(!ids.length){$('#placementMsg').textContent='请至少选一个分组，或选择移到其他。';return;}
+    apply(ids);
+  };
+  $('#placementAuto').onclick=()=>apply(null);
+  $('#placementOther').onclick=()=>apply([otherId]);
+  $('#placementHide').onclick=()=>{
+    if(layoutData.stats.channels<=1&&membership.length){$('#placementMsg').textContent='至少保留一个频道。';return;}
+    apply([]);
+  };
+  $('#placementMsg').textContent='';panel.showModal();
+}
+function renderEditorChannels(){
+  const list=$('#ldChannels');list.replaceChildren();
+  if(!layoutData)return;
+  const catalog=layoutData.editor_channels||[], byId=new Map(catalog.map(c=>[c.uuid,c]));
+  const ids=editorRows(), q=$('#ldSearch').value.trim().toLowerCase();
+  const rows=(allEditorChannels?catalog:ids.map(id=>byId.get(id)).filter(Boolean))
+    .filter(c=>!q||c.name.toLowerCase().includes(q)||String(c.num).includes(q));
+  const sortable=!allEditorChannels&&!q&&layoutSel!==otherId;
+  for(const c of rows){
+    const li=document.createElement('li');li.dataset.uuid=c.uuid;
+    const at=ids.indexOf(c.uuid);
+    li.innerHTML=`<span><b>${esc(c.name)}</b><small>${esc(String(c.num))}</small></span><div class="ld-row-actions"></div>`;
+    const actions=li.lastElementChild;
+    const button=(text,label,fn,off=false)=>{
+      const b=document.createElement('button');b.type='button';b.className='btn small';
+      b.textContent=text;b.setAttribute('aria-label',label);b.title=label;b.disabled=off;b.onclick=fn;actions.append(b);
+    };
+    if(sortable){
+      button('↑','上移 '+c.name,()=>reorderChannel(c.uuid,at-1),previewBusy||at<1);
+      button('↓','下移 '+c.name,()=>reorderChannel(c.uuid,at+1),previewBusy||at===ids.length-1);
+      li.draggable=true;
+      li.ondragstart=e=>{if(previewBusy){e.preventDefault();return;}dragChannel=c.uuid;e.dataTransfer.setData('text/plain',c.uuid);e.dataTransfer.effectAllowed='move';};
+      li.ondragover=e=>{if(dragChannel)e.preventDefault();};
+      li.ondrop=e=>{if(dragChannel){e.preventDefault();reorderChannel(dragChannel,at);dragChannel=null;}};
+      li.ondragend=()=>{dragChannel=null;};
+    }
+    button('分组','调整 '+c.name+' 的分组',()=>editChannel(c),previewBusy);
+    list.append(li);
+  }
+  if(!rows.length){const li=document.createElement('li');li.textContent=q?'没有匹配频道':'本组暂无频道';list.append(li);}
+  $('#ldAll').textContent=allEditorChannels?'当前分组':'全部频道';
+  $('#ldAll').setAttribute('aria-pressed',String(allEditorChannels));
+}
+$('#ldAll').onclick=()=>{allEditorChannels=!allEditorChannels;renderEditorChannels();};
+$('#ldSearch').oninput=renderEditorChannels;
+function recountLayout(){
+  const seq=++previewSeq;
+  clearTimeout(previewTimer);
+  previewBusy=true;
+  previewTimer=setTimeout(async()=>{
+    try{
+      const data=await request('/api/layout/preview',{method:'POST',body:layoutData.layout});
+      if(seq!==previewSeq)return;
+      layoutData.groups=data.groups;layoutData.stats=data.stats;layoutData.editor_channels=data.editor_channels;
+      if(document.activeElement!==$('#ldName')&&document.activeElement!==$('#ldSearch'))renderLayout();
+      else renderEditorChannels();
+    }catch(e){if(seq===previewSeq)layoutNotice('预览未更新：'+e.message,'error');}
+    finally{if(seq===previewSeq){previewBusy=false;renderEditorChannels();}}
+  },100);
 }
 $('#btnAddGroup').onclick=()=>{
   if(!layoutData)return;
@@ -653,7 +728,7 @@ $('#btnAddGroup').onclick=()=>{
   // 新分组排在最前：用户新建时通常就是想让它优先收录
   layoutData.layout.groups.unshift({id,title:'新分组',rules:[],multi:false});
   layoutSel=id;layoutDirty=true;renderLayout();markLayoutDirty();
-  $('#ldName').focus();$('#ldName').select();
+  selectLayoutGroup(id);$('#ldName').focus();$('#ldName').select();
 };
 $('#btnDelGroup').onclick=()=>{
   const g=layoutData?.layout.groups.find(x=>x.id===layoutSel);
@@ -661,18 +736,23 @@ $('#btnDelGroup').onclick=()=>{
   if(!confirm(`删除分组「${g.title}」？组内频道会回落到其它分组，不会丢台。`))return;
   const i=layoutData.layout.groups.indexOf(g);
   layoutData.layout.groups.splice(i,1);
+  for(const [uuid,ids] of Object.entries(layoutData.layout.placements||{})){
+    if(!ids.includes(g.id))continue;
+    const rest=ids.filter(id=>id!==g.id);
+    if(rest.length)layoutData.layout.placements[uuid]=rest;else delete layoutData.layout.placements[uuid];
+  }
   layoutSel=layoutData.layout.groups[Math.max(0,i-1)]?.id||null;
-  layoutDirty=true;renderLayout();markLayoutDirty();
+  layoutDirty=true;renderLayout();markLayoutDirty();recountLayout();
 };
 $('#ldName').oninput=e=>{
   const g=layoutData?.layout.groups.find(x=>x.id===layoutSel);if(!g)return;
   const v=e.target.value.slice(0,layoutData.limit.title);
   if(e.target.value!==v)e.target.value=v;
-  g.title=v;layoutDirty=true;loadedStats=false;markLayoutDirty();recountLayout();
+  g.title=v;layoutDirty=true;markLayoutDirty();recountLayout();
   const li=$('#layoutGroupList').querySelector(`[data-id="${g.id}"] b`);if(li)li.textContent=v||'（未命名）';
   $('#ldTitle').textContent=v||'（未命名）';
 };
-$('#ldMulti').onchange=e=>{const g=layoutData?.layout.groups.find(x=>x.id===layoutSel);if(!g)return;g.multi=e.target.checked;layoutDirty=true;renderLayout();markLayoutDirty();};
+$('#ldMulti').onchange=e=>{const g=layoutData?.layout.groups.find(x=>x.id===layoutSel);if(!g)return;g.multi=e.target.checked;layoutDirty=true;renderLayout();markLayoutDirty();recountLayout();};
 $('#btnAddRule').onclick=()=>{
   const g=layoutData?.layout.groups.find(x=>x.id===layoutSel);if(!g)return;
   const type=$('#ruleType').value, raw=$('#ruleValue').value.trim();
@@ -682,7 +762,7 @@ $('#btnAddRule').onclick=()=>{
   else if(type==='match_num'){if(!raw){tip('请填写台号');return;}rule={type:'match',field:'num',op:'equals',value:raw};}
   else rule={type:'flag',flag:type==='flag_4k'?'is_4k':'back'};
   if(g.rules.some(r=>JSON.stringify(r)===JSON.stringify(rule))){tip('这条规则已存在');return;}
-  g.rules.push(rule);layoutDirty=true;loadedStats=false;$('#ruleValue').value='';
+  g.rules.push(rule);layoutDirty=true;$('#ruleValue').value='';
   renderLayout();markLayoutDirty();recountLayout();
 };
 $('#ruleType').onchange=()=>{
@@ -694,18 +774,18 @@ $('#btnSaveLayout').onclick=async()=>{
   if(!layoutData||layoutSaving)return;
   const bad=layoutData.layout.groups.find(g=>!g.title.trim());
   if(bad){layoutNotice('有分组还没有名字，请先填写。','error');layoutSel=bad.id;renderLayout();return;}
-  layoutSaving=true;formMessage('#layoutMsg','保存中…');
+  layoutSaving=true;$('#layoutSection').inert=true;formMessage('#layoutMsg','保存中…');
   try {
     await request('/api/layout',{method:'POST',body:layoutData.layout});
     layoutDirty=false;formMessage('#layoutMsg','已保存，下次成功更新后生效');
     // 保存后以服务端统计为准，不再用本地预估覆盖
-    loadedStats=true;await loadLayout();
+    await loadLayout();
   } catch(e){formMessage('#layoutMsg','保存失败：'+e.message,'error');layoutNotice('保存失败：'+e.message,'error');}
-  finally {layoutSaving=false;}
+  finally {layoutSaving=false;$('#layoutSection').inert=false;}
 };
 $('#btnSeedReset').onclick=async()=>{
   if(!confirm('恢复成上游原版的 11 个分组？当前自定义的分组名、顺序与规则都会丢弃。'))return;
-  layoutSaving=true;formMessage('#layoutMsg','正在恢复…');
+  layoutSaving=true;$('#layoutSection').inert=true;formMessage('#layoutMsg','正在恢复…');
   try {
     const data=await request('/api/layout');
     const seed={version:1,seeded_from:'orig',groups:data.orig_groups.map((t,i)=>({id:'g'+(i+1),title:t,rules:[{type:'orig_group',value:t}],multi:false})),hide:[],order:[],renumber:false};
@@ -713,7 +793,7 @@ $('#btnSeedReset').onclick=async()=>{
     formMessage('#layoutMsg','已恢复为上游原版分组，下次更新生效');
     await loadLayout();
   } catch(e){formMessage('#layoutMsg','恢复失败：'+e.message,'error');}
-  finally {layoutSaving=false;}
+  finally {layoutSaving=false;$('#layoutSection').inert=false;}
 };
 $('#btnCopyMine').onclick=()=>{const el=$('#mineAddr');if(el.value)copy(el.value,el);else tip('先生成一次清单');};
 

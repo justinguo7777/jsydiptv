@@ -303,6 +303,18 @@ body[data-page=live] .stat {display:none}
 .rule-add input {flex:1;min-width:110px}
 .layout-foot {display:grid;gap:6px;margin-top:13px}
 .layout-foot .addr {max-width:420px}
+#layoutDetail {scroll-margin-top:70px}
+#ldSearch {width:100%}
+#ldChannels {list-style:none;padding:0;display:grid;gap:4px;max-height:42vh;overflow:auto;margin:8px 0}
+#ldChannels li {display:flex;justify-content:space-between;align-items:center;gap:6px;padding:5px 8px;background:var(--surface);border-radius:8px;min-width:0}
+#ldChannels li > span {display:grid;min-width:0;overflow-wrap:anywhere}
+#ldChannels small {color:var(--muted)}
+.ld-row-actions {display:flex;gap:4px;flex:none}
+#channelPlacement {color:var(--text);background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;width:min(420px,calc(100% - 28px));max-height:86vh}
+#channelPlacement::backdrop {background:#0007}
+#placementGroups {display:grid;gap:6px;max-height:40vh;overflow:auto;margin:10px 0}
+#placementGroups label {min-height:34px;white-space:normal;overflow-wrap:anywhere}
+@media(pointer:coarse){.ld-row-actions .btn,.lg-move button {min-height:44px;min-width:36px}}
 @media(max-width:760px){
   .layout-grid {grid-template-columns:1fr}
   .lg-list {max-height:none}
