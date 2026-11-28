@@ -545,7 +545,7 @@ $('#pg-player').addEventListener('click',e=>{const b=e.target.closest('[data-c]'
 // ---------------------------------------------------------------- 自定义分组编辑器
 // 只编辑「第三套」的展示层：分组名、组顺序、规则、重叠与隐藏。
 // 保存前不落盘；保存后下次成功更新生效，①②两套不受影响。
-let layoutData=null, layoutDirty=false, layoutSaving=false, layoutSel=null;
+let layoutData=null, layoutDirty=false, layoutSaving=false, layoutSel=null, loadedStats=false;
 const layoutNotice=(text,kind='')=>{const el=$('#layoutNotice');el.textContent=text;el.hidden=!text;el.dataset.kind=kind;};
 function ruleText(r, orig){
   if(r.type==='channel')return `指定频道 ${r.label||r.uuid.slice(0,8)}`;
@@ -587,7 +587,7 @@ function renderLayout(){
   else for(const [i,r] of g.rules.entries()){
     const row=document.createElement('div');row.className='rule-row';
     row.innerHTML=`<span>${esc(ruleText(r))}</span><button class="btn small" type="button" aria-label="删除规则 ${esc(ruleText(r))}">删除</button>`;
-    row.querySelector('button').onclick=()=>{g.rules.splice(i,1);layoutDirty=true;renderLayout();markLayoutDirty();recountLayout();};
+    row.querySelector('button').onclick=()=>{g.rules.splice(i,1);layoutDirty=true;loadedStats=false;renderLayout();markLayoutDirty();recountLayout();};
     rules.append(row);
   }
   // 命中数由服务端按已保存的布局算；本地改动未保存时不能拿旧数字冒充
@@ -603,7 +603,7 @@ function markLayoutDirty(){formMessage('#layoutMsg','尚未保存');}
 async function loadLayout(){
   try {
     const data=await request('/api/layout');
-    layoutData=data;layoutDirty=false;
+    layoutData=data;layoutDirty=false;loadedStats=true;
     if(!layoutSel||!data.layout.groups.some(g=>g.id===layoutSel))layoutSel=data.layout.groups[0]?.id||null;
     const st=data.stats||{};
     layoutNotice(data.seeded?'首次已按上游原版分组生成，可直接改名或搬频道。'
@@ -613,7 +613,8 @@ async function loadLayout(){
 }
 function recountLayout(){
   // 草稿阶段的命中数在本地算：命中规则与频道都已在内存里，不必等服务端。
-  if(!layoutData)return;
+  // 以服务端统计为准的时刻（刚保存/刚加载）不要覆盖。
+  if(!layoutData||loadedStats)return;
   const rows=channels.length?channels:[];
   if(!rows.length)return;
   const hits={};
@@ -655,7 +656,7 @@ $('#ldName').oninput=e=>{
   const g=layoutData?.layout.groups.find(x=>x.id===layoutSel);if(!g)return;
   const v=e.target.value.slice(0,layoutData.limit.title);
   if(e.target.value!==v)e.target.value=v;
-  g.title=v;layoutDirty=true;markLayoutDirty();recountLayout();
+  g.title=v;layoutDirty=true;loadedStats=false;markLayoutDirty();recountLayout();
   const li=$('#layoutGroupList').querySelector(`[data-id="${g.id}"] b`);if(li)li.textContent=v||'（未命名）';
   $('#ldTitle').textContent=v||'（未命名）';
 };
@@ -669,7 +670,7 @@ $('#btnAddRule').onclick=()=>{
   else if(type==='match_num'){if(!raw){tip('请填写台号');return;}rule={type:'match',field:'num',op:'equals',value:raw};}
   else rule={type:'flag',flag:type==='flag_4k'?'is_4k':'back'};
   if(g.rules.some(r=>JSON.stringify(r)===JSON.stringify(rule))){tip('这条规则已存在');return;}
-  g.rules.push(rule);layoutDirty=true;$('#ruleValue').value='';
+  g.rules.push(rule);layoutDirty=true;loadedStats=false;$('#ruleValue').value='';
   renderLayout();markLayoutDirty();recountLayout();
 };
 $('#ruleType').onchange=()=>{
@@ -685,7 +686,8 @@ $('#btnSaveLayout').onclick=async()=>{
   try {
     await request('/api/layout',{method:'POST',body:layoutData.layout});
     layoutDirty=false;formMessage('#layoutMsg','已保存，下次成功更新后生效');
-    await loadLayout();renderLayout();
+    // 保存后以服务端统计为准，不再用本地预估覆盖
+    loadedStats=true;await loadLayout();
   } catch(e){formMessage('#layoutMsg','保存失败：'+e.message,'error');layoutNotice('保存失败：'+e.message,'error');}
   finally {layoutSaving=false;}
 };
