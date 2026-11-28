@@ -124,8 +124,9 @@ def browser_checks(base, app, fixture, out, version):
         click('[data-filter="recent"]');expect(at('#liveList .item[data-uuid="a"]')).to_be_visible();check('收藏、最近频道跨刷新持久化，EPG 关闭独立提示')
         # Stress the actual responsive layout with a catalog the size of the upstream set,
         # including CJK names, very long programme titles, and multiple groups.
-        page.route('**/api/channels', lambda r: r.fulfill(json={
+        page.route('**/api/channels*', lambda r: r.fulfill(json={
             'ok':True,'generation':json.loads((Path(app._output_dir())/'meta.json').read_text())['generation'],
+            'order':['央视','卫视','江苏','地方-苏州','体育竞技'],
             'channels':[dict(uuid=f'visual{i}',name=f'频道 {i:03d} · '+('超长频道名用于检验窄屏布局'*4 if i%5==0 else '高清'),
                 num=str(i),group=['央视','卫视','江苏','地方-苏州','体育竞技'][i//56],back=i%2,
                 now={'t':('山河之间' if i==0 else '城市纪实 · '+('超长节目名称用于检验换行'*4 if i%5==0 else '今晚特别节目')),'s':int(datetime.now().timestamp())-900,'e':int(datetime.now().timestamp())+1800}) for i in range(280)]}))

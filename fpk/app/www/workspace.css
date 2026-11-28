@@ -309,3 +309,9 @@ body[data-page=live] .stat {display:none}
   .rule-add select {max-width:100%;width:100%}
   .layout-editor .section-head {flex-direction:column}
 }
+
+/* 订阅页标签增加到四个：窄屏下允许自身横向滚动，不撑破页面宽度 */
+.tabs {max-width:100%;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none}
+.tabs::-webkit-scrollbar {display:none}
+.tab {flex:none}
+@media(max-width:420px){.tab{padding:7px 12px;font-size:12px}}
