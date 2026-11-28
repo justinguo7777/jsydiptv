@@ -2668,12 +2668,22 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             hits = {}
             for ch, title in entries:
                 hits[title] = hits.get(title, 0) + 1
+            # 「规则命中」与「实际收录」分开算：先命中者胜，排在后面的组可能
+            # 规则命中了却被前面的组抢走，只报一个数字会让人以为规则写错了。
+            matches = {}
+            for g in layout["groups"]:
+                matches[g["title"]] = sum(
+                    1 for c in original
+                    if not any(_mine_match(c, r, member) for r in (layout.get("hide") or []))
+                    and any(_mine_match(c, r, member) for r in g["rules"]))
             titles = [g["title"] for g in layout["groups"]]
             self._json({"ok": True, "layout": layout, "seeded": seeded,
                         "stats": stats,
-                        "groups": [{"title": t, "hits": hits.get(t, 0),
+                        "groups": [{"title": t, "matches": matches.get(t, 0),
+                                    "hits": hits.get(t, 0),
                                     "in_output": hits.get(t, 0) > 0} for t in titles]
-                                  + ([{"title": "其他", "hits": stats["ungrouped"],
+                                  + ([{"title": "其他", "matches": stats["ungrouped"],
+                                       "hits": stats["ungrouped"],
                                        "in_output": stats["ungrouped"] > 0}] if stats["ungrouped"] else []),
                         "orig_groups": [g for _a, g in ORIG_GROUPS],
                         "limit": {"groups": MINE_GROUP_LIMIT, "title": MINE_TITLE_LIMIT,

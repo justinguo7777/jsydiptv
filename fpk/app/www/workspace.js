@@ -562,8 +562,13 @@ function renderLayout(){
     const li=document.createElement('li');
     li.className='lg-item'+(g.id===layoutSel?' on':'');
     li.dataset.id=g.id;
-    const hits=(layoutData.groups||[]).find(x=>x.title===g.title)?.hits||0;
-    li.innerHTML=`<button class="lg-pick" type="button"><b>${esc(g.title)}</b><em>${g.rules.length} 条规则 · ${layoutDirty?'待统计':hits+' 台'}${!layoutDirty&&!hits?' · 不进订阅':''}</em>${g.multi?'<span class="u4k zhx">重叠</span>':''}</button>
+    const info=(layoutData.groups||[]).find(x=>x.title===g.title)||{};
+    const matches=info.matches||0, hits=info.hits||0;
+    const summary=layoutDirty?`${g.rules.length} 条规则`
+      :hits?`${g.rules.length} 条规则 · 收录 ${hits} 台`
+      :matches?`${g.rules.length} 条规则 · 命中 ${matches} 台但被前面分组抢走`
+      :`${g.rules.length} 条规则 · 不进订阅`;
+    li.innerHTML=`<button class="lg-pick" type="button"><b>${esc(g.title)}</b><em>${summary}</em>${g.multi?'<span class="u4k zhx">重叠</span>':''}</button>
       <span class="lg-move"><button type="button" data-up="${i}" aria-label="上移 ${esc(g.title)}" ${i===0?'disabled':''}>↑</button><button type="button" data-down="${i}" aria-label="下移 ${esc(g.title)}" ${i===layoutData.layout.groups.length-1?'disabled':''}>↓</button></span>`;
     li.querySelector('.lg-pick').onclick=()=>{layoutSel=g.id;renderLayout();};
     li.querySelectorAll('[data-up],[data-down]').forEach(b=>b.onclick=e=>{
@@ -591,8 +596,11 @@ function renderLayout(){
     rules.append(row);
   }
   // 命中数由服务端按已保存的布局算；本地改动未保存时不能拿旧数字冒充
-  const live=n=>(layoutData.groups||[]).find(x=>x.title===n)?.hits||0;
-  $('#ldHit').textContent=g?(layoutDirty?`预计命中 ${live(g.title)} 台（未保存）`:`当前命中 ${live(g.title)} 台`):'';
+  const info=g?((layoutData.groups||[]).find(x=>x.title===g.title)||{}):{};
+  const matches=info.matches||0, hits=info.hits||0;
+  $('#ldHit').textContent=g?(layoutDirty
+    ? `预计命中 ${matches} 台（未保存）`
+    : `规则命中 ${matches} 台，实际收录 ${hits} 台${matches&&!hits?'（排在前面的分组已收录）':''}`):'';
   const addr=$('#mineAddr');
   const meta=statusData?.meta||{};
   addr.value=Number(meta.channels)>0?location.origin+'/mine.m3u8':'';
@@ -617,12 +625,15 @@ function recountLayout(){
   if(!layoutData||loadedStats)return;
   const rows=channels.length?channels:[];
   if(!rows.length)return;
-  const hits={};
+  const hits={}, matches={};
   for(const c of rows){
-    const g=layoutData.layout.groups.find(g=>g.rules.some(r=>matchRule(c,r)));
-    if(g)hits[g.title]=(hits[g.title]||0)+1;
+    for(const g of layoutData.layout.groups){
+      if(g.rules.some(r=>matchRule(c,r)))matches[g.title]=(matches[g.title]||0)+1;
+    }
+    const first=layoutData.layout.groups.find(g=>g.rules.some(r=>matchRule(c,r)));
+    if(first)hits[first.title]=(hits[first.title]||0)+1;
   }
-  layoutData.groups=(layoutData.groups||[]).map(x=>({...x,hits:hits[x.title]||0}));
+  layoutData.groups=(layoutData.groups||[]).map(x=>({...x,hits:hits[x.title]||0,matches:matches[x.title]||0}));
   renderLayout();
 }
 // 与服务端 _mine_match 同语义，用于草稿阶段预估；最终以生成结果为准。
@@ -639,7 +650,8 @@ $('#btnAddGroup').onclick=()=>{
   if(!layoutData)return;
   if(layoutData.layout.groups.length>=layoutData.limit.groups){tip('分组数量已达上限');return;}
   const id='g'+Date.now().toString(36);
-  layoutData.layout.groups.push({id,title:'新分组',rules:[],multi:false});
+  // 新分组排在最前：用户新建时通常就是想让它优先收录
+  layoutData.layout.groups.unshift({id,title:'新分组',rules:[],multi:false});
   layoutSel=id;layoutDirty=true;renderLayout();markLayoutDirty();
   $('#ldName').focus();$('#ldName').select();
 };

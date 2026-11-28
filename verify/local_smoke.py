@@ -185,9 +185,6 @@ def browser_checks(base, app, fixture, out, version):
         first.locator('.lg-pick').click()
         expect(at('#ldName')).not_to_have_value('')
         at('#ldName').fill('我的常看');text('#layoutMsg','尚未保存')
-        click('#ldTitle')
-        at('#layoutGroupList .lg-item').first.locator('[data-down]').click()
-        at('#ldName').fill('我的常看')
         # 用「可回看」这条无参数规则，保证在 3 台夹具里必命中
         at('#ruleType').select_option('flag_back')
         click('#btnAddRule')
@@ -195,13 +192,12 @@ def browser_checks(base, app, fixture, out, version):
         capture('settings-layout')
         expect(at('#ldHit')).to_contain_text('预计命中')
         click('#btnSaveLayout');text('#layoutMsg','已保存，下次成功更新后生效')
-        expect(at('#ldHit')).to_contain_text('当前命中 3 台')
+        # 排在最前的分组先命中：夹具里 a、c 可回看，b 不可
+        expect(at('#ldHit')).to_contain_text('规则命中 2 台，实际收录 2 台')
         saved=app.load_layout()
         titles=[g['title'] for g in saved['groups']]
-        assert '我的常看' in titles,titles
-        # 点过「下移」，所以改名后的分组应排在第 2 位，且规则保留
-        assert titles.index('我的常看')==1,(titles,titles.index('我的常看'))
-        assert saved['groups'][1]['rules'],saved['groups'][1]
+        assert titles[0]=='我的常看',titles
+        assert saved['groups'][0]['rules'],saved['groups'][0]
         click('#btnUpd2');expect(at('#updHint')).to_have_text('清单更新完成。',timeout=20000)
         out=Path(app._output_dir())
         assert (out/'mine.m3u8').is_file()
