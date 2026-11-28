@@ -315,3 +315,8 @@ body[data-page=live] .stat {display:none}
 .tabs::-webkit-scrollbar {display:none}
 .tab {flex:none}
 @media(max-width:420px){.tab{padding:7px 12px;font-size:12px}}
+
+/* 分组方案与上方筛选是两件事：加一条分隔与留白，避免看起来像同一组控件 */
+.view-bar {margin-top:2px;padding-top:9px;border-top:1px solid var(--line)}
+.view-hint {padding-left:13px}
+@media(max-width:500px){.vbtn{padding:5px 9px;font-size:11px}.view-label{display:none}}
