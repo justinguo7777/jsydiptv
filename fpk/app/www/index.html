@@ -53,6 +53,13 @@
             <button class="chip on" id="allChannels" data-filter="all" aria-pressed="true">全部</button><button class="chip" id="favOnly" data-filter="fav" aria-pressed="false">收藏</button><button class="chip" data-filter="recent" aria-pressed="false">最近</button>
           </div>
         </div>
+        <div class="view-bar" role="group" aria-label="分组方案">
+          <span class="view-label">分组</span>
+          <button class="vbtn on" data-view="smart" aria-pressed="true">智能</button>
+          <button class="vbtn" data-view="orig" aria-pressed="false">原版</button>
+          <button class="vbtn" data-view="mine" aria-pressed="false">自定义</button>
+        </div>
+        <p class="view-hint muted" id="viewHint">按内容拆分，4K 置顶。</p>
         <div id="liveList" class="chlist-scroll"><div class="empty">加载频道中…</div></div>
       </section>
       <section class="surface now-guide" id="nowGuide" aria-labelledby="nowGuideTitle" hidden>
@@ -69,11 +76,12 @@
     <div class="page-head"><h1 id="subscription-title">播放器订阅</h1></div>
     <div class="notice" id="subscriptionNotice" role="status" hidden></div>
     <div class="tabs" id="pTabs" role="group" aria-label="订阅分类">
-      <button class="tab on" data-t="guide" aria-pressed="true">按播放器</button><button class="tab" data-t="all" aria-pressed="false">全部地址</button><button class="tab" data-t="orig" aria-pressed="false">原版清单</button>
+      <button class="tab on" data-t="guide" aria-pressed="true">按播放器</button><button class="tab" data-t="all" aria-pressed="false">全部地址</button><button class="tab" data-t="orig" aria-pressed="false">原版</button><button class="tab" data-t="mine" aria-pressed="false">自定义</button>
     </div>
     <div id="pguide"><div class="surface profile"><label for="playerChoice">使用的播放器</label><select id="playerChoice"></select><p id="playerHint" class="muted"></p></div><div id="recommended" class="address-grid"></div></div>
     <div id="pall" class="address-grid" hidden></div>
     <div id="porig" hidden><p class="muted">按运营商分组重建；同一频道可跨组出现。</p><div class="address-grid" id="originalLinks"></div></div>
+    <div id="pmine" hidden><p class="muted">你在「自定义分组」里编辑的分组名与顺序；节目单与其它清单共用。首次基于上游原版分组。</p><div class="address-grid" id="mineLinks"></div></div>
   </section>
   <section class="page manage" id="pg-sched" aria-labelledby="settings-title" hidden>
     <div class="page-head"><h1 id="settings-title">设置</h1><p id="schNext"></p></div>
@@ -87,6 +95,53 @@
       <form class="surface section" id="scheduleForm"><h2 id="scheduleTitle">定时更新</h2><fieldset id="scheduleFields" aria-labelledby="scheduleTitle" disabled><label class="check switch-row"><span>每天自动更新</span><input type="checkbox" role="switch" id="swOn"></label><label class="field" for="tm">更新时间（北京时间）<input type="text" id="tm" inputmode="numeric" maxlength="5" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" placeholder="03:30" title="24 小时制，例如 03:30" required></label><button class="btn primary" id="btnSaveSch" type="submit">保存定时设置</button><p class="form-msg" id="scheduleMsg" role="status"></p></fieldset></form>
       <form class="surface section" id="outputForm"><h2 id="outputTitle">输出设置</h2><fieldset id="outputFields" aria-labelledby="outputTitle" disabled><label class="field" for="outputMode">输出模式<select id="outputMode"><option value="minimal">精简 · 常用订阅</option><option value="full">完整 · 额外 TXT、CSV、组播</option></select></label><label class="check switch-row"><span>生成节目单</span><input type="checkbox" role="switch" id="epgEnabled"></label><p class="muted">保存后，下次成功更新时生效。</p><div class="form-actions"><button class="btn primary" id="btnSaveOutput" type="submit">保存输出设置</button><button class="btn accent" type="button" id="applyOutput" hidden>应用到清单</button></div><p class="form-msg" id="outputMsg" role="status"></p></fieldset></form>
     </div>
+    <section class="surface section layout-editor" id="layoutSection" aria-labelledby="layoutTitle">
+      <div class="section-head wrap">
+        <div><h2 id="layoutTitle">自定义分组</h2><p class="muted">只改分组名与顺序，频道地址和节目单不变。保存后下次成功更新生效。</p></div>
+        <div class="layout-actions">
+          <button class="btn" id="btnSeedReset" type="button">恢复上游原版</button>
+          <button class="btn primary" id="btnSaveLayout" type="button">保存分组</button>
+        </div>
+      </div>
+      <div id="layoutNotice" class="notice" role="status" hidden></div>
+      <div class="layout-grid">
+        <div class="layout-groups">
+          <div class="lg-head"><h3>分组顺序</h3><button class="btn small" id="btnAddGroup" type="button">新建分组</button></div>
+          <ol id="layoutGroupList" class="lg-list" aria-label="分组列表"></ol>
+          <p class="muted lg-note">空分组不会出现在订阅里。拖动或点箭头调整顺序。</p>
+        </div>
+        <div class="layout-detail" id="layoutDetail">
+          <div class="ld-head">
+            <h3 id="ldTitle">选择一个分组</h3>
+            <div class="ld-tools">
+              <label class="ld-multi"><input type="checkbox" id="ldMulti"> 允许与其它分组重叠</label>
+              <button class="btn small" id="btnDelGroup" type="button">删除分组</button>
+            </div>
+          </div>
+          <label class="field" for="ldName">分组名<input type="text" id="ldName" maxlength="24" placeholder="例如 我的常看"></label>
+          <div class="ld-rules">
+            <h4>匹配规则 <span class="muted" id="ldHit"></span></h4>
+            <div id="ldRuleList" class="rule-list"></div>
+            <div class="rule-add">
+              <select id="ruleType" aria-label="规则类型">
+                <option value="orig_group">属于上游分组</option>
+                <option value="match_name">频道名包含</option>
+                <option value="match_num">台号为</option>
+                <option value="flag_back">可回看</option>
+                <option value="flag_4k">实测 4K</option>
+              </select>
+              <input type="text" id="ruleValue" placeholder="分组名或关键词" aria-label="规则内容">
+              <button class="btn small" id="btnAddRule" type="button">添加规则</button>
+            </div>
+            <p class="muted" id="ruleHint">同一频道可落入多个分组，但只有勾选「允许重叠」的分组会额外收录。</p>
+          </div>
+        </div>
+      </div>
+      <div class="layout-foot">
+        <div class="addr"><input readonly id="mineAddr" aria-label="自定义清单地址" placeholder="保存并更新后可用"><button class="btn" type="button" id="btnCopyMine">复制</button></div>
+        <p class="form-msg" id="layoutMsg" role="status"></p>
+      </div>
+    </section>
     <details class="surface section"><summary>关于本服务</summary><p class="muted">适用于江苏移动宽带。地市、节目单天数与端口可在 fnOS 应用设置中调整。请仅在受信任的网络使用。</p></details>
   </section>
 </main>

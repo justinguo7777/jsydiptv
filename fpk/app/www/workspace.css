@@ -217,3 +217,95 @@ body[data-page=live] .stat {display:none}
 .epg-tools {flex-wrap:wrap}
 .epg-summary {display:flex;flex-wrap:wrap;gap:5px 16px;padding:3px 0 8px;font-size:12px}
 .epg-summary span {overflow-wrap:anywhere}
+
+
+/* 频道台标底：黑底 + 极轻的光晕渐变。
+   台标多数是透明 PNG / 白色描边，浅色底会糊成一片；纯黑又显死板。
+   这里用低饱和的深色渐变 + 顶部微光，保证任何台标都能看清，同时不抢注意力。 */
+:root {
+  --logo-bg: radial-gradient(115% 130% at 50% -18%, #24405f 0%, #16233a 42%, #0c111c 100%);
+  --logo-bg-plain: #0e1524;
+  --logo-edge: rgb(148 176 220 / .16);
+  --logo-glow: 0 1px 0 rgb(255 255 255 / .06) inset;
+}
+.lg, .now-guide-item .lg {
+  background: var(--logo-bg);
+  border: 1px solid var(--logo-edge);
+  box-shadow: var(--logo-glow);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.lg img, .now-guide-item .lg img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 3px;
+  /* 镂空台标在深底上更透亮；轻微投影避免亮色台标贴边发虚 */
+  filter: drop-shadow(0 1px 1px rgb(0 0 0 / .55));
+}
+/* 后台探测出「深色台标」时不再整体压暗，统一用同一深底即可 */
+.lg.t-dark {background: var(--logo-bg)}
+/* 没有台标时显示台号：深底亮字，和真台标同尺寸，不跳版 */
+.lg.t-none {
+  background: var(--logo-bg);
+  color: #dce6f7;
+  font: 700 13px/1 ui-monospace, monospace;
+  letter-spacing: .02em;
+  text-shadow: 0 0 8px rgb(150 190 255 / .35);
+  padding: 0;
+}
+/* 播放器空态与台标底呼应，避免一块纯黑一块亮白 */
+.watch[data-idle=true] .player-wrap.idle {
+  background: radial-gradient(120% 100% at 50% 0%, #233a5c 0%, #131e31 55%, #0a1019 100%);
+}
+@media (forced-colors: active) {
+  .lg {border: 1px solid CanvasText; background: Canvas; box-shadow: none}
+}
+
+
+/* 三套分组方案切换（首页频道列表顶部） */
+.view-bar {display:flex;align-items:center;gap:5px;padding:0 13px 2px;flex-wrap:wrap}
+.view-label {color:var(--muted);font-size:11px;letter-spacing:.04em;margin-right:2px}
+.vbtn {padding:5px 12px;min-height:32px;border:1px solid transparent;border-radius:9px;background:var(--soft);color:var(--muted);font-size:12px;font-weight:600}
+.vbtn:hover {background:var(--accent-soft);color:var(--accent)}
+.vbtn.on {background:var(--accent-soft);color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+.view-hint {padding:0 13px 0;margin:0 0 6px;font-size:11px;min-height:15px}
+
+/* 自定义分组编辑器 */
+.layout-editor .section-head {align-items:flex-start}
+.layout-actions {display:flex;gap:7px;flex-wrap:wrap}
+.layout-grid {display:grid;grid-template-columns:minmax(220px,.9fr) minmax(0,1.6fr);gap:14px;margin-top:12px}
+.layout-groups,.layout-detail {border:1px solid var(--line);border-radius:14px;padding:12px;min-width:0;background:var(--soft)}
+.lg-head,.ld-head {display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:9px}
+.layout-editor h3 {font-size:14px}
+.layout-editor h4 {font-size:13px;margin:12px 0 7px;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.lg-list {list-style:none;margin:0;padding:0;display:grid;gap:4px;max-height:min(52vh,430px);overflow:auto}
+.lg-item {display:flex;align-items:center;gap:4px;border:1px solid transparent;border-radius:10px;background:var(--surface)}
+.lg-item:hover {border-color:var(--line)}
+.lg-item.on {border-color:var(--accent);background:var(--accent-soft)}
+.lg-pick {flex:1;min-width:0;display:grid;gap:1px;padding:8px 10px;text-align:left;border:0;background:none;color:inherit;border-radius:9px}
+.lg-pick b {font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lg-pick em {font-style:normal;color:var(--muted);font-size:11px}
+.lg-pick .u4k {justify-self:start;margin-top:2px}
+.lg-move {display:flex;flex:none;gap:2px;padding-right:5px}
+.lg-move button {width:26px;height:26px;border:1px solid var(--line);border-radius:7px;background:var(--surface);color:var(--muted);font-size:12px;padding:0}
+.lg-move button:hover:not(:disabled) {background:var(--accent-soft);color:var(--accent)}
+.lg-move button:disabled {opacity:.35}
+.lg-note {margin:9px 0 0;font-size:11px}
+.ld-tools {display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.ld-multi {display:flex;align-items:center;gap:5px;color:var(--muted);font-size:12px;white-space:nowrap}
+.rule-list {display:grid;gap:5px;max-height:min(30vh,240px);overflow:auto}
+.rule-row {display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:6px 9px;font-size:12px}
+.rule-row span {overflow-wrap:anywhere}
+.rule-row .btn {flex:none}
+.rule-add {display:flex;gap:6px;margin-top:9px;flex-wrap:wrap}
+.rule-add select {max-width:190px}
+.rule-add input {flex:1;min-width:110px}
+.layout-foot {display:grid;gap:6px;margin-top:13px}
+.layout-foot .addr {max-width:420px}
+@media(max-width:760px){
+  .layout-grid {grid-template-columns:1fr}
+  .lg-list {max-height:none}
+  .rule-add select {max-width:100%;width:100%}
+  .layout-editor .section-head {flex-direction:column}
+}

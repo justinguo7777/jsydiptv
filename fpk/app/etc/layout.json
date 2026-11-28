@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "seeded_from": "orig",
+  "groups": [
+    {
+      "id": "g1",
+      "title": "超高清",
+      "rules": [
+        {
+          "type": "orig_group",
+          "value": "超高清"
+        }
+      ]
+    },
+    {
+      "id": "g2",
+      "title": "央视",
+      "rules": [
+        {
+          "type": "orig_group",
+          "value": "央视"
+        }
+      ]
+    },
+    {
+      "id": "g3",
+      "title": "本地",
+      "rules": [
+        {
+          "type": "orig_group",
+          "value": "本地"
+        }
+      ]
+    },
+    {
+      "id": "g4",
+      "title": "卫视",
+      "rules": [
+        {
+          "type": "orig_group",
+          "value": "卫视"
+        }
+      ]
+    },
+    {
+      "id": "g5",
+      "title": "体育",
+      "rules": [
+        {
+          "type": "orig_group",
+          "value": "体育"
+        }
+      ]
+    },
+    {
+      "id": "g6",
+      "title": "专业频道",
+      "rules": [
+        {
+          "type": "orig_group",
+          "value": "专业频道"
+        }
+      ]
+    },
+    {
+      "id": "g7",
+      "title": "影视",
+      "rules": [
+        {
+          "type": "orig_group",
+          "value": "影视"
+        }
+      ]
+    },
+    {
+      "id": "g8",
+      "title": "少儿",
+      "rules": [
+        {
+          "type": "orig_group",
+          "value": "少儿"
+        }
+      ]
+    },
+    {
+      "id": "g9",
+      "title": "生活",
+      "rules": [
+        {
+          "type": "orig_group",
+          "value": "生活"
+        }
+      ]
+    },
+    {
+      "id": "g10",
+      "title": "广播",
+      "rules": [
+        {
+          "type": "orig_group",
+          "value": "广播"
+        }
+      ]
+    },
+    {
+      "id": "g11",
+      "title": "购物",
+      "rules": [
+        {
+          "type": "orig_group",
+          "value": "购物"
+        }
+      ]
+    }
+  ],
+  "order": [],
+  "hide": [],
+  "renumber": false
+}

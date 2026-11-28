@@ -1378,10 +1378,16 @@ def write_outputs(out, cdn, channels, programs, backup_days, days, base_url="", 
 
 def write_fongmi_outputs(out, base, channels, programs, backup_days, day0, days, epg_enable):
     """两种模式共享。预生成今天及配置范围内的未来日期，避免午夜到更新之间断档。"""
-    live = {"group": "江苏移动IPTV", "name": "直播+回看", "type": 0,
+    live = {"group": "江苏移动IPTV", "name": "智能分组", "type": 0,
             "url": base + "/fongmi.m3u", "playerType": 1, "ua": STREAM_UA}
+    # 三套订阅并存：同一个 FongMi 配置里直接看到三套，不用填三个地址。
+    # lives[0] 保持「智能分组」，兼容已按旧结构配置的用户。
+    others = [{"group": "江苏移动IPTV", "name": "原版分组", "type": 0,
+               "url": base + "/orig.m3u8", "playerType": 1, "ua": STREAM_UA},
+              {"group": "江苏移动IPTV", "name": "自定义分组", "type": 0,
+               "url": base + "/mine_fongmi.m3u", "playerType": 1, "ua": STREAM_UA}]
     config = {"notice": "江苏移动IPTV · FongMi（%d 频道 / 回看 %d 天）" % (len(channels), backup_days),
-              "sites": [], "lives": [live]}
+              "sites": [], "lives": [live] + others}
     if epg_enable:
         live["epg"] = base + "/epg/{id}/{date}.json"
         config["epg"] = [live["epg"]]
@@ -1548,6 +1554,283 @@ def write_orig_outputs(out, cdn, channels, programs, backup_days, base_url=""):
     return total, len(used)
 
 
+# ---------------------------------------------------------------- 第三套：自定义分组
+#
+# 三套订阅并存、互不影响：
+#   ① 智能分组  iptv.m3u8 / kodi.m3u / fongmi.m3u   —— _classify() 判定
+#   ② 原版分组  orig.m3u8 / orig_epg.xml / orig.json —— 上游 11 组原样
+#   ③ 自定义    mine.m3u8 / mine_kodi.m3u / mine_fongmi.m3u / mine.json
+#
+# 第三套只做「展示层」：改分组名、搬频道、调顺序、隐藏。
+# 频道地址、回看模板、节目单完全复用，EPG 三套共用一份 epg.xml。
+
+LAYOUT_FILE_NAME = "layout.json"
+MINE_GROUP_LIMIT = 50
+MINE_TITLE_LIMIT = 24
+MINE_RULE_LIMIT = 500
+MINE_GROUP_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+MINE_RULE_TYPES = ("channel", "orig_group", "match", "flag")
+MINE_FLAGS = ("is_4k", "back", "zhx")
+
+
+def _layout_path():
+    return os.path.join(PKGETC, LAYOUT_FILE_NAME)
+
+
+def seed_layout(original):
+    """首次种子：按上游 11 组生成，规则是「属于上游组 X」。
+
+    用规则而不是 uuid 列表，运营商改动分组后自定义套自动跟随。
+    """
+    groups = []
+    for i, (_aid, gname) in enumerate(ORIG_GROUPS):
+        groups.append({"id": "g%d" % (i + 1), "title": gname,
+                       "rules": [{"type": "orig_group", "value": gname}]})
+    return {"version": 1, "seeded_from": "orig", "groups": groups,
+            "order": [], "hide": [], "renumber": False}
+
+
+def _layout_valid_rule(r):
+    if not isinstance(r, dict):
+        return False
+    t = r.get("type")
+    if t not in MINE_RULE_TYPES:
+        return False
+    if t == "channel":
+        return isinstance(r.get("uuid"), str) and 0 < len(r["uuid"]) <= 64
+    if t == "orig_group":
+        return isinstance(r.get("value"), str) and 0 < len(r["value"]) <= 32
+    if t == "flag":
+        return r.get("flag") in MINE_FLAGS
+    field, op, val = r.get("field"), r.get("op"), r.get("value")
+    if field not in ("name", "num") or op not in ("contains", "equals", "regex"):
+        return False
+    if not isinstance(val, str) or not val or len(val) > 64:
+        return False
+    if op == "regex":
+        try:
+            re.compile(val)
+        except re.error:
+            return False
+    return True
+
+
+def validate_layout(layout):
+    """返回 (规范化后的布局, 错误信息)。错误信息为空表示通过。"""
+    if not isinstance(layout, dict):
+        return None, "布局必须是 JSON 对象"
+    groups = layout.get("groups")
+    if not isinstance(groups, list):
+        return None, "groups 必须是数组"
+    if len(groups) > MINE_GROUP_LIMIT:
+        return None, "分组不能超过 %d 个" % MINE_GROUP_LIMIT
+    seen, total_rules, out_groups = set(), 0, []
+    for g in groups:
+        if not isinstance(g, dict):
+            return None, "分组项必须是对象"
+        gid = g.get("id")
+        if not isinstance(gid, str) or not MINE_GROUP_ID_RE.match(gid):
+            return None, "分组 id 只能是字母数字下划线短横线（1-32 位）"
+        if gid in seen:
+            return None, "分组 id 重复：%s" % gid
+        seen.add(gid)
+        title = g.get("title")
+        if not isinstance(title, str) or not title.strip():
+            return None, "分组标题不能为空"
+        title = title.strip()
+        if len(title) > MINE_TITLE_LIMIT:
+            return None, "分组标题不能超过 %d 个字符：%s" % (MINE_TITLE_LIMIT, title)
+        rules = g.get("rules") or []
+        if not isinstance(rules, list):
+            return None, "rules 必须是数组"
+        for r in rules:
+            if not _layout_valid_rule(r):
+                return None, "分组「%s」里有无效规则" % title
+        total_rules += len(rules)
+        out_groups.append({"id": gid, "title": title, "rules": rules,
+                           "multi": bool(g.get("multi"))})
+    if total_rules > MINE_RULE_LIMIT:
+        return None, "规则总数不能超过 %d 条" % MINE_RULE_LIMIT
+    hide = layout.get("hide") or []
+    if not isinstance(hide, list):
+        return None, "hide 必须是数组"
+    for r in hide:
+        if not _layout_valid_rule(r):
+            return None, "隐藏列表里有无效规则"
+    order = layout.get("order") or []
+    if not isinstance(order, list):
+        return None, "order 必须是数组"
+    for o in order:
+        if not isinstance(o, dict) or not _layout_valid_rule({k: v for k, v in o.items() if k != "pos"}):
+            return None, "排序项里有无效规则"
+        if not isinstance(o.get("pos"), int) or o["pos"] < 1:
+            return None, "排序位次必须是正整数"
+    return {"version": 1, "seeded_from": layout.get("seeded_from") or "orig",
+            "groups": out_groups, "hide": hide, "order": order,
+            "renumber": bool(layout.get("renumber"))}, ""
+
+
+def load_layout():
+    try:
+        with open(_layout_path(), encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def save_layout(layout):
+    os.makedirs(PKGETC, exist_ok=True)
+    tmp = _layout_path() + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(layout, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, _layout_path())
+
+
+def _mine_match(ch, rule, member):
+    t = rule.get("type")
+    if t == "channel":
+        return ch["uuid"] == rule.get("uuid")
+    if t == "orig_group":
+        return rule.get("value") in (member.get(ch["uuid"]) or [])
+    if t == "flag":
+        f = rule.get("flag")
+        if f == "is_4k":
+            return bool(ch.get("is_4k"))
+        if f == "back":
+            return ch.get("back", 0) > 0
+        return bool(ch.get("zhx"))
+    field, op, val = rule.get("field"), rule.get("op"), rule.get("value")
+    src = ch.get("name", "") if field == "name" else str(ch.get("num", ""))
+    if op == "contains":
+        return val in src
+    if op == "equals":
+        return src == val
+    try:
+        return re.search(val, src) is not None
+    except re.error:
+        return False
+
+
+def apply_mine_layout(channels, layout, member):
+    """求值得到 [(频道, 分组标题), ...]，顺序即输出顺序。
+
+    · 分组顺序 = groups 数组顺序，未命中的频道落到末尾「其他」。
+    · 一台可以多组：只有标了 multi 的分组会额外收录，且必须显式打开，
+      避免出现用户没预期的重复频道。
+    · 隐藏优先于分组；全被隐藏时返回空，由调用方回退。
+    """
+    groups = layout.get("groups") or []
+    hide = layout.get("hide") or []
+    order = layout.get("order") or []
+    pos_of = {}
+    for o in order:
+        for ch in channels:
+            if _mine_match(ch, {k: v for k, v in o.items() if k != "pos"}, member):
+                pos_of.setdefault(ch["uuid"], o["pos"])
+    kept = [ch for ch in channels
+            if not any(_mine_match(ch, r, member) for r in hide)]
+    buckets = [[] for _ in groups]
+    ungrouped = []
+    for ch in kept:
+        hits = [i for i, g in enumerate(groups) if any(_mine_match(ch, r, member) for r in g["rules"])]
+        if not hits:
+            ungrouped.append(ch)
+            continue
+        buckets[hits[0]].append(ch)
+        for i in hits[1:]:
+            if groups[i].get("multi"):
+                buckets[i].append(ch)
+    big = 10 ** 9
+
+    def num_of(ch):
+        return int(re.sub(r"\D", "", str(ch.get("num", ""))) or 0)
+
+    for b in buckets:
+        b.sort(key=lambda ch: (pos_of.get(ch["uuid"], big), num_of(ch), ch.get("name", "")))
+    ungrouped.sort(key=lambda ch: (num_of(ch), ch.get("name", "")))
+    entries, stats = [], {"groups": 0, "entries": 0, "channels": 0, "multi": 0}
+    for g, b in zip(groups, buckets):
+        if not b:
+            continue                      # 空分组不进订阅，播放器里不留空目录
+        stats["groups"] += 1
+        for ch in b:
+            entries.append((ch, g["title"]))
+    if ungrouped:
+        stats["groups"] += 1
+        for ch in ungrouped:
+            entries.append((ch, "其他"))
+    stats["entries"] = len(entries)
+    stats["channels"] = len({ch["uuid"] for ch, _t in entries})
+    stats["multi"] = stats["entries"] - stats["channels"]
+    stats["hidden"] = len(channels) - len(kept)
+    stats["ungrouped"] = len(ungrouped)
+    return entries, stats
+
+
+def write_mine_outputs(out, cdn, entries, backup_days, base_url, epg_enable, layout):
+    """第三套产物：三种回看语法 + JSON 索引。EPG 复用 epg.xml。"""
+    os.makedirs(out, exist_ok=True)
+    base = (base_url or "").rstrip("/")
+    stamp = datetime.now(TZ8).strftime("%Y-%m-%d %H:%M:%S")
+    tvg = (' url-tvg="%s/epg.xml" x-tvg-url="%s/epg.xml"' % (base, base)) if base and epg_enable else ""
+    renumber = bool(layout.get("renumber"))
+    chno = {}
+    if renumber:
+        for i, (ch, _t) in enumerate(entries, 1):
+            chno.setdefault(ch["uuid"], i)
+
+    def logo_of(ch):
+        p = ch.get("logo") or ""
+        if not p or p.startswith(("http://", "https://")):
+            return p
+        return (base + p) if base else p
+
+    def live_of(ch):
+        return "%s/%s/live1/%s/%s/1.m3u8" % (cdn, ch["cp"], ch["code"], ch["code"])
+
+    def back_of(ch, va, vb):
+        return "%s/%s/lookback/%s/%s?playseek=%s-%s" % (
+            cdn, ch["cp"], ch["code"], ch["code"], va, vb)
+
+    def write(name, text):
+        tmp = os.path.join(out, name + ".tmp")
+        with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+        os.replace(tmp, os.path.join(out, name))
+
+    def build(va, vb):
+        lines = ["#EXTM3U" + tvg,
+                 "# 江苏移动 IPTV · 自定义分组｜更新: %s｜%d 条" % (stamp, len(entries))]
+        for ch, group in entries:
+            catch = ""
+            if ch.get("back", 0) > 0:
+                catch = (' catchup="default" catchup-days="%d" catchup-source="%s"'
+                         % (backup_days, back_of(ch, va, vb)))
+            num = chno.get(ch["uuid"], ch["num"]) if renumber else ch["num"]
+            lines.append('#EXTINF:-1 tvg-id="%s" tvg-name="%s" tvg-chno="%s" tvg-logo="%s" group-title="%s"%s,%s'
+                         % (ch["uuid"], ch["name"], num, logo_of(ch), group, catch, ch["name"]))
+            lines.append(live_of(ch))
+        return "\n".join(lines)
+
+    body = build("${(b)yyyyMMddHHmmss}", "${(e)yyyyMMddHHmmss}")
+    write("mine.m3u8", body)
+    write("mine_fongmi.m3u", body)
+    write("mine_kodi.m3u", build("${start:YmdHMS}", "${end:YmdHMS}"))
+
+    grouped = []
+    for ch, group in entries:
+        if not grouped or grouped[-1]["name"] != group:
+            grouped.append({"name": group, "channels": []})
+        grouped[-1]["channels"].append({
+            "num": chno.get(ch["uuid"], ch["num"]) if renumber else ch["num"],
+            "name": ch["name"], "uuid": ch["uuid"],
+            "logo": logo_of(ch), "back": ch.get("back", 0), "live": live_of(ch)})
+    write("mine.json", json.dumps({
+        "updated": stamp, "note": "用户自定义分组与顺序；节目单复用 epg.xml",
+        "total_entries": len(entries), "groups": grouped}, ensure_ascii=False, indent=2))
+    return len(entries), len({ch["uuid"] for ch, _t in entries})
+
+
 # ---------------------------------------------------------------- 自检与发布
 
 def probe_live(url, timeout=8):
@@ -1581,7 +1864,8 @@ def validate_live(channels, cdn):
 
 
 _CORE_OUTPUTS = {"iptv.m3u8", "kodi.m3u", "fongmi.m3u", "fongmi.json", "epg.xml", "tvbox.json",
-                 "meta.json", "4k.json", "channels.json", "programs.json", "orig.m3u8", "orig_epg.xml", "orig.json"}
+                 "meta.json", "4k.json", "channels.json", "programs.json", "orig.m3u8", "orig_epg.xml", "orig.json",
+                 "mine.m3u8", "mine_kodi.m3u", "mine_fongmi.m3u", "mine.json"}
 
 
 def validate_generation(build, minimal, epg_enable):
@@ -1728,6 +2012,36 @@ def _prepare_generation(build, previous, cfg, base_url, cdn, chs, prs, detail, e
     write_outputs(build, cdn, chs, smart_programs, cfg["backup_days"], cfg["days"], base_url, minimal, epg_enable)
     total, unique = write_orig_outputs(build, cdn, original, prs, cfg["backup_days"], base_url)
     log("      原版分组清单：%d 条 / %d 个频道" % (total, unique))
+    # ---- 第三套：自定义分组（首次按上游 11 组种子）
+    layout = load_layout()
+    mine_state = "user"
+    if not isinstance(layout, dict) or not layout.get("groups"):
+        layout = seed_layout(original)
+        mine_state = "seeded"
+        try:
+            save_layout(layout)
+        except Exception as e:      # noqa: BLE001
+            log("[自定义分组] 种子写入失败: %s" % e)
+    member = {c["uuid"]: (c.get("otypes") or []) for c in original}
+    # 供网页编辑器求值「属于上游组」规则时使用，避免前端另存一份归属表
+    try:
+        with open(os.path.join(build, "orig_member.json"), "w", encoding="utf-8") as f:
+            json.dump(member, f, ensure_ascii=False)
+    except Exception as e:      # noqa: BLE001
+        log("[自定义分组] 归属表写入失败: %s" % e)
+    mine_entries, mine_stats = apply_mine_layout(original, layout, member)
+    if not mine_entries:
+        # 配置把频道全隐藏了：不阻断更新，回退成原版分组并留痕
+        layout_used = seed_layout(original)
+        mine_entries, mine_stats = apply_mine_layout(original, layout_used, member)
+        mine_state = "fallback:empty"
+        log("[自定义分组] 配置求值为空，已回退原版分组")
+    else:
+        layout_used = layout
+    mine_total, mine_unique = write_mine_outputs(build, cdn, mine_entries,
+                                                 cfg["backup_days"], base_url, epg_enable,
+                                                 layout_used)
+    log("      自定义分组清单：%d 条 / %d 个频道（%s）" % (mine_total, mine_unique, mine_state))
     detail = dict(detail, privacy="clean")  # 只有后续整代检查通过才会发布这份元数据
     meta = {
         "generation": os.path.basename(build), "epg_enabled": epg_enable,
@@ -1740,6 +2054,10 @@ def _prepare_generation(build, previous, cfg, base_url, cdn, chs, prs, detail, e
         "uhd_real": sum(1 for ch in chs if ch.get("is_4k")),
         "uhd_h265": sum(1 for ch in chs if ch.get("group") == GROUP_UHD and "265" in (ch.get("codec") or "")),
         # 孤儿频道（上游未归任何分组，靠名称兜底）
+        "mine": {"state": mine_state, "groups": mine_stats["groups"],
+                 "entries": mine_stats["entries"], "channels": mine_stats["channels"],
+                 "multi": mine_stats["multi"], "hidden": mine_stats["hidden"],
+                 "ungrouped": mine_stats["ungrouped"]},
         "orphans": len(ORPHANS),
         "orphan_list": [dict(v) for v in ORPHANS.values()],
     }
@@ -1911,6 +2229,8 @@ READ_ONLY_FILES = {
     "channels.json",
     # 方案二：上游原版清单（11 组原样）
     "orig.m3u8", "orig_epg.xml", "orig.json",
+    # 方案三：用户自定义分组
+    "mine.m3u8", "mine_kodi.m3u", "mine_fongmi.m3u", "mine.json",
     # ASCII 别名（真实文件另见 ALIASES，部分模式会直接落盘）
     "kodi.m3u", "live.m3u", "live.txt", "diyp.m3u", "fongmi.m3u", "multicast.m3u",
 }
@@ -2262,6 +2582,55 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             # channels.json 是每天 03:30 生成时写死的 now/next，之后一整天都不会变，
             # 于是界面上的节目名永远停在凌晨那一档 —— 这就是「EPG 不实时更新」的根因。
             _refresh_now_next(chs, self.output_dir)
+            # 三套分组方案：首页切换时在同一份频道数据上换分组标签与组顺序，
+            # 频道地址、节目单不变，用户可以先检查再决定用哪一套。
+            view = qs.get("view", ["smart"])[0]
+            order = list(GROUP_ORDER)
+            if view in ("orig", "mine"):
+                try:
+                    with open(os.path.join(self.output_dir, "orig_member.json"), encoding="utf-8") as f:
+                        member = json.load(f)
+                except Exception:
+                    member = {}
+                if view == "orig":
+                    by_uuid = {c["uuid"]: c for c in chs}
+                    seq, seen = [], set()
+                    for _aid, gname in ORIG_GROUPS:
+                        rows = [c for c in chs if gname in (member.get(c["uuid"]) or [])]
+                        rows.sort(key=lambda c: int(re.sub(r"\D", "", str(c.get("num", ""))) or 0))
+                        for c in rows:
+                            if c["uuid"] in seen:
+                                continue      # 列表里一台只显示一次，清单里仍按上游多组输出
+                            seen.add(c["uuid"])
+                            c = dict(c, group=gname)
+                            by_uuid[c["uuid"]] = c
+                            seq.append(c)
+                    missing = [c for c in chs if c["uuid"] not in seen]
+                    for c in missing:
+                        seq.append(dict(c, group="其他"))
+                    chs = seq
+                    order = [g for _a, g in ORIG_GROUPS] + (["其他"] if missing else [])
+                else:
+                    layout = load_layout()
+                    if not isinstance(layout, dict) or not layout.get("groups"):
+                        layout = seed_layout(chs)
+                    entries, _st = apply_mine_layout(chs, layout, member)
+                    by_uuid = {c["uuid"]: c for c in chs}
+                    seq, seen = [], set()
+                    for ch, title in entries:
+                        if ch["uuid"] in seen:
+                            continue
+                        seen.add(ch["uuid"])
+                        seq.append(dict(by_uuid[ch["uuid"]], group=title))
+                    for c in chs:
+                        if c["uuid"] not in seen and not any(
+                                _mine_match(c, r, member) for r in (layout.get("hide") or [])):
+                            seq.append(dict(c, group="其他"))
+                    chs = seq
+                    titles = [g["title"] for g in layout["groups"]]
+                    order = [t for t in titles if any(c["group"] == t for c in chs)]
+                    if any(c["group"] == "其他" for c in chs):
+                        order.append("其他")
             groups = {}
             for c in chs:
                 groups[c["group"]] = groups.get(c["group"], 0) + 1
@@ -2270,9 +2639,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if kw:
                 chs = [c for c in chs if kw in c["name"].lower() or kw in c["uuid"].lower()
                        or kw in str(c.get("num", ""))]
-            self._json({"ok": True, "total": len(chs), "groups": groups,
+            self._json({"ok": True, "total": len(chs), "groups": groups, "view": view,
                         "generation": self._safe_meta().get("generation"),
-                        "order": list(GROUP_ORDER), "channels": chs})
+                        "order": order, "channels": chs})
             return
 
         if path == "/api/epg":
@@ -2492,6 +2861,72 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             res = do_update(cfg, self._self_base(), reason="api")
             self._json(res, 200 if res.get("ok") else 500)
             return
+        if path == "/api/layout":
+            original = []
+            try:
+                with open(os.path.join(self.output_dir, "channels.json"), encoding="utf-8") as f:
+                    original = json.load(f)
+            except Exception:
+                self._json({"ok": False, "msg": "频道表尚未生成，请先执行一次更新"}, 404)
+                return
+            layout = load_layout()
+            seeded = False
+            if not isinstance(layout, dict) or not layout.get("groups"):
+                layout = seed_layout(original)
+                seeded = True
+            # 给界面用：每个分组当前命中几台、按什么顺序输出
+            member = {}
+            try:
+                with open(os.path.join(self.output_dir, "orig_member.json"), encoding="utf-8") as f:
+                    member = json.load(f)
+            except Exception:
+                member = {}
+            entries, stats = apply_mine_layout(original, layout, member)
+            hits = {}
+            for ch, title in entries:
+                hits[title] = hits.get(title, 0) + 1
+            titles = [g["title"] for g in layout["groups"]]
+            self._json({"ok": True, "layout": layout, "seeded": seeded,
+                        "stats": stats,
+                        "groups": [{"title": t, "hits": hits.get(t, 0),
+                                    "in_output": hits.get(t, 0) > 0} for t in titles]
+                                  + ([{"title": "其他", "hits": stats["ungrouped"],
+                                       "in_output": stats["ungrouped"] > 0}] if stats["ungrouped"] else []),
+                        "orig_groups": [g for _a, g in ORIG_GROUPS],
+                        "limit": {"groups": MINE_GROUP_LIMIT, "title": MINE_TITLE_LIMIT,
+                                  "rules": MINE_RULE_LIMIT},
+                        "outputs": {"m3u": "/mine.m3u8", "kodi": "/mine_kodi.m3u",
+                                    "fongmi": "/mine_fongmi.m3u", "json": "/mine.json"}})
+            return
+
+        if u.path == "/api/layout":
+            n = int(self.headers.get("Content-Length") or 0)
+            if n <= 0 or n > 262144:
+                self._json({"ok": False, "msg": "请求体为空或过大"}, 400)
+                return
+            try:
+                body = json.loads(self.rfile.read(n).decode("utf-8"))
+            except Exception as e:      # noqa: BLE001
+                self._json({"ok": False, "msg": "JSON 解析失败: %s" % e}, 400)
+                return
+            layout, err = validate_layout(body)
+            if err:
+                self._json({"ok": False, "msg": err}, 400)
+                return
+            try:
+                old = load_layout()
+                if isinstance(old, dict):
+                    with open(_layout_path() + ".prev", "w", encoding="utf-8") as f:
+                        json.dump(old, f, ensure_ascii=False, indent=2)
+                save_layout(layout)
+            except Exception as e:      # noqa: BLE001
+                self._json({"ok": False, "msg": "写入布局失败: %s" % e}, 500)
+                return
+            log("[自定义分组] 布局已保存：%d 组 / %d 条规则"
+                % (len(layout["groups"]), sum(len(g["rules"]) for g in layout["groups"])))
+            self._json({"ok": True, "layout": layout})
+            return
+
         if u.path == "/api/config":
             n = int(self.headers.get("Content-Length") or 0)
             if n <= 0 or n > 65536:

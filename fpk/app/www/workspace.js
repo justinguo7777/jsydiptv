@@ -63,12 +63,17 @@ function route(focus=false) {
   $$('.page').forEach(section=>section.hidden=section.id!==`pg-${page}`);
   if(previous!==page){const toast=$('#tip');clearTimeout(toast.timer);toast.classList.remove('on');}
   if(focus){window.scrollTo(0,0);$('#main').focus({preventScroll:true});}
-  if(page==='sched') refreshStatus();
+  if(page==='sched'){refreshStatus();if(!layoutData)loadLayout();}
 }
 window.addEventListener('hashchange',()=>route(true));
 // Channel filters are shared by rendering and previous/next; recent channels store only IDs.
 let channels=[], byId=new Map(), catalogError='', filter='all', query='', generation=null;
+// 首页可切换三套分组方案，只换分组标签与组顺序，频道地址与节目单不变。
+let view=(()=>{const v=read('view','smart');return ['smart','orig','mine'].includes(v)?v:'smart';})();
+const viewHint={smart:'按内容拆分，4K 置顶。',orig:'按运营商电视墙分组重建。',mine:'你自定义的分组与顺序。'};
+const viewCache=new Map();
 let favorites=new Set(listPref('fav')), recent=listPref('recent').slice(0,12);
+let viewOrder=[];
 const folded=new Set();
 const filters={all:()=>true,fav:c=>favorites.has(c.uuid),recent:c=>recent.includes(c.uuid),catchup:c=>c.back>0,uhd:c=>c.is_4k};
 function visibleChannels(){
@@ -108,6 +113,12 @@ function renderChannels(){
   }
   const groups=new Map();
   for(const c of list){const g=filter==='recent'?'最近选择':c.group;if(!groups.has(g))groups.set(g,[]);groups.get(g).push(c);}
+  // 分组顺序用服务端下发的 order（智能=GROUP_ORDER，原版=上游 11 组，自定义=用户顺序）。
+  if(filter!=='recent'&&viewOrder.length){
+    const rank=g=>{const i=viewOrder.indexOf(g);return i<0?viewOrder.length:i;};
+    const sorted=[...groups].sort((a,b)=>rank(a[0])-rank(b[0]));
+    groups.clear();for(const [g,rows] of sorted)groups.set(g,rows);
+  }
   const frag=document.createDocumentFragment();
   for(const [group, rows] of groups){
     const section=document.createElement('div'); section.className='gsec'; section.dataset.group=group;
@@ -143,14 +154,16 @@ function updateProgramLabels(){
 function goSettings(){if(location.hash==='#settings')return;location.hash='settings';}
 let catalogSeq=0, catalogTimer;
 async function refreshCatalog(){
-  const seq=++catalogSeq;
+  const seq=++catalogSeq, want=view;
   try {
-    const next=await request('/api/channels'); if(seq!==catalogSeq)return;
+    const next=await request('/api/channels?view='+encodeURIComponent(want)); if(seq!==catalogSeq||want!==view)return;
     const gen=next.generation??null, catalog=next.channels;
+    viewCache.set(want,{generation:gen,channels:catalog,order:next.order||[],groups:next.groups||{}});
     if(!Array.isArray(catalog))throw Error('频道数据不可用');
     const changed=gen!==generation || catalog.length!==channels.length || catalog.some((c,i)=>['uuid','name','group','num','logo','live','back','is_4k','uhd_unverified','zhx'].some(k=>c[k]!==channels[i][k]));
     const guideChanged=gen!==generation;
-    generation=gen;channels=catalog;byId=new Map(channels.map(c=>[c.uuid,c]));catalogError='';notice('#catalogNotice','');
+    generation=gen;channels=catalog;byId=new Map(channels.map(c=>[c.uuid,c]));catalogError='';
+    viewOrder=next.order||[];notice('#catalogNotice','');notice('#viewHint',viewHint[view]);
     if(changed || !channels.length)renderChannels(); else updateProgramLabels();
     if(!live)renderIntro();
     if(guideChanged){guideCache.clear();if(live)loadGuide(live.uuid);}
@@ -177,6 +190,18 @@ document.addEventListener('keydown',e=>{
   }
 });
 $$('.chip').forEach(b=>b.onclick=()=>changeFilter(b.dataset.filter));
+// 切换分组方案：同一份频道数据换分组，保留收藏/搜索，清空分组折叠状态。
+function changeView(next){
+  if(!['smart','orig','mine'].includes(next)||next===view)return;
+  view=next;save('view',view);
+  $$('.vbtn').forEach(b=>{const on=b.dataset.view===next;b.classList.toggle('on',on);b.setAttribute('aria-pressed',String(on));});
+  notice('#viewHint',viewHint[next]);
+  folded.clear();
+  const cached=viewCache.get(next);
+  if(cached&&cached.generation===generation){channels=cached.channels;byId=new Map(channels.map(c=>[c.uuid,c]));viewOrder=cached.order;renderChannels();}
+  else {empty($('#liveList'),'正在切换分组…');refreshCatalog();}
+}
+$$('.vbtn').forEach(b=>b.onclick=()=>changeView(b.dataset.view));
 $('#allToggle').onclick=()=>{
   const sections=$$('#liveList .gsec'), collapse=sections.some(e=>!e.classList.contains('folded'));
   for(const e of sections){if(collapse)folded.add(e.dataset.group);else folded.delete(e.dataset.group);}
@@ -470,7 +495,9 @@ const links={
   ku9:['FongMi 兼容 M3U','/fongmi.m3u','与通用 M3U 内容一致。'],epg:['节目单 XMLTV','/epg.xml','在播放器的 EPG 设置中添加。'],
   ch:['频道数据','/channels.json','JSON'], '4k':['真 4K 与候选数据','/4k.json','JSON'],
   live_txt:['纯直播 TXT','/live.txt','完整模式额外输出。','full'],multicast:['组播 M3U','/multicast.m3u','完整模式额外输出，需组播网络。','full'],
-  orig_m3u:['原版 M3U','/orig.m3u8','运营商分组。'],orig_epg:['原版节目单','/orig_epg.xml','与原版清单配对。'],orig_json:['原版配置','/orig.json','原版分组 JSON。']
+  orig_m3u:['原版 M3U','/orig.m3u8','运营商分组。'],orig_epg:['原版节目单','/orig_epg.xml','与原版清单配对。'],orig_json:['原版配置','/orig.json','原版分组 JSON。'],
+  mine_m3u:['自定义 M3U','/mine.m3u8','你在设置里改的分组名与顺序。'],mine_kodi:['自定义 Kodi M3U','/mine_kodi.m3u','Kodi 专用回看语法。'],
+  mine_fongmi:['自定义 FongMi M3U','/mine_fongmi.m3u','与通用 M3U 内容一致。'],mine_json:['自定义配置','/mine.json','自定义分组 JSON。']
 };
 const profiles={
   fongmi:['FongMi TV','优先使用一条配置。已有 M3U 配置可继续用。',['fongmi','ku9']],
@@ -506,12 +533,158 @@ function refreshLinks(){
 }
 buildCards('#pall',Object.keys(links).filter(k=>!k.startsWith('orig_')),'u_');
 buildCards('#originalLinks',['orig_m3u','orig_epg','orig_json'],'u_');
+buildCards('#mineLinks',['mine_m3u','mine_kodi','mine_fongmi','mine_json'],'u_');
 choice.onchange=()=>{save('player',choice.value);showProfile();};
 $$('#pTabs .tab').forEach(t=>t.onclick=()=>{
   $$('#pTabs .tab').forEach(b=>{b.classList.toggle('on',b===t);b.setAttribute('aria-pressed',String(b===t));});
-  for(const k of ['guide','all','orig'])$('#p'+k).hidden=k!==t.dataset.t;
+  for(const k of ['guide','all','orig','mine'])$('#p'+k).hidden=k!==t.dataset.t;
 });
 $('#pg-player').addEventListener('click',e=>{const b=e.target.closest('[data-c]');if(b){const el=document.getElementById(b.dataset.c);if(el.value)copy(el.value,el);}});
+
+
+// ---------------------------------------------------------------- 自定义分组编辑器
+// 只编辑「第三套」的展示层：分组名、组顺序、规则、重叠与隐藏。
+// 保存前不落盘；保存后下次成功更新生效，①②两套不受影响。
+let layoutData=null, layoutDirty=false, layoutSaving=false, layoutSel=null;
+const layoutNotice=(text,kind='')=>{const el=$('#layoutNotice');el.textContent=text;el.hidden=!text;el.dataset.kind=kind;};
+function ruleText(r, orig){
+  if(r.type==='channel')return `指定频道 ${r.label||r.uuid.slice(0,8)}`;
+  if(r.type==='orig_group')return `属于上游分组「${r.value}」`;
+  if(r.type==='flag')return {is_4k:'实测 4K',back:'可回看',zhx:'高清臻享'}[r.flag]||r.flag;
+  const f=r.field==='name'?'频道名':'台号';
+  const o={contains:'包含',equals:'等于',regex:'匹配'}[r.op]||r.op;
+  return `${f}${o}「${r.value}」`;
+}
+function renderLayout(){
+  if(!layoutData)return;
+  const list=$('#layoutGroupList');list.replaceChildren();
+  layoutData.layout.groups.forEach((g,i)=>{
+    const li=document.createElement('li');
+    li.className='lg-item'+(g.id===layoutSel?' on':'');
+    li.dataset.id=g.id;
+    const hits=(layoutData.groups||[]).find(x=>x.title===g.title)?.hits||0;
+    li.innerHTML=`<button class="lg-pick" type="button"><b>${esc(g.title)}</b><em>${g.rules.length} 条规则 · ${hits} 台${hits?'':' · 不进订阅'}</em>${g.multi?'<span class="u4k zhx">重叠</span>':''}</button>
+      <span class="lg-move"><button type="button" data-up="${i}" aria-label="上移 ${esc(g.title)}" ${i===0?'disabled':''}>↑</button><button type="button" data-down="${i}" aria-label="下移 ${esc(g.title)}" ${i===layoutData.layout.groups.length-1?'disabled':''}>↓</button></span>`;
+    li.querySelector('.lg-pick').onclick=()=>{layoutSel=g.id;renderLayout();};
+    li.querySelectorAll('[data-up],[data-down]').forEach(b=>b.onclick=e=>{
+      e.stopPropagation();
+      const from=i, to=b.dataset.up!==undefined?i-1:i+1;
+      if(to<0||to>=layoutData.layout.groups.length)return;
+      const arr=layoutData.layout.groups,[m]=arr.splice(from,1);arr.splice(to,0,m);
+      layoutDirty=true;renderLayout();markLayoutDirty();
+    });
+    list.append(li);
+  });
+  const g=layoutData.layout.groups.find(x=>x.id===layoutSel);
+  $('#ldTitle').textContent=g?g.title:'选择一个分组';
+  $('#ldName').value=g?g.title:'';
+  $('#ldName').disabled=!g;$('#ldMulti').checked=!!g?.multi;$('#ldMulti').disabled=!g;
+  $('#btnDelGroup').disabled=!g||layoutData.layout.groups.length<=1;
+  $('#btnAddRule').disabled=!g;$('#ruleType').disabled=!g;$('#ruleValue').disabled=!g;
+  const rules=$('#ldRuleList');rules.replaceChildren();
+  if(!g){const p=document.createElement('p');p.className='muted';p.textContent='先在左侧选择一个分组，或新建一个。';rules.append(p);}
+  else if(!g.rules.length){const p=document.createElement('p');p.className='muted';p.textContent='还没有规则，这个分组不会收录任何频道。';rules.append(p);}
+  else for(const [i,r] of g.rules.entries()){
+    const row=document.createElement('div');row.className='rule-row';
+    row.innerHTML=`<span>${esc(ruleText(r))}</span><button class="btn small" type="button" aria-label="删除规则 ${esc(ruleText(r))}">删除</button>`;
+    row.querySelector('button').onclick=()=>{g.rules.splice(i,1);layoutDirty=true;renderLayout();markLayoutDirty();recountLayout();};
+    rules.append(row);
+  }
+  $('#ldHit').textContent=g?`该分组当前命中 ${(layoutData.groups||[]).find(x=>x.title===g.title)?.hits||0} 台`:'';
+  const addr=$('#mineAddr');
+  const meta=statusData?.meta||{};
+  addr.value=Number(meta.channels)>0?location.origin+'/mine.m3u8':'';
+  addr.placeholder=Number(meta.channels)>0?'':'生成一次清单后可用';
+  $('#mineAddr').nextElementSibling.disabled=!addr.value;
+}
+function markLayoutDirty(){formMessage('#layoutMsg','尚未保存');}
+async function loadLayout(){
+  try {
+    const data=await request('/api/layout');
+    layoutData=data;layoutDirty=false;
+    if(!layoutSel||!data.layout.groups.some(g=>g.id===layoutSel))layoutSel=data.layout.groups[0]?.id||null;
+    const st=data.stats||{};
+    layoutNotice(data.seeded?'首次已按上游原版分组生成，可直接改名或搬频道。'
+      :`当前输出 ${st.entries||0} 条 / ${st.channels||0} 个频道${st.multi?`，其中 ${st.multi} 条为重叠`:''}${st.hidden?`，隐藏 ${st.hidden} 台`:''}${st.ungrouped?`，${st.ungrouped} 台落「其他」`:''}。`);
+    renderLayout();
+  } catch(e){layoutNotice('读取自定义分组失败：'+e.message,'error');}
+}
+function recountLayout(){
+  if(!layoutData)return;
+  request('/api/layout').then(d=>{
+    const prev=layoutSel;
+    layoutData=Object.assign({},layoutData,{groups:d.groups,stats:d.stats});
+    layoutSel=prev;renderLayout();
+  }).catch(()=>{});
+}
+$('#btnAddGroup').onclick=()=>{
+  if(!layoutData)return;
+  if(layoutData.layout.groups.length>=layoutData.limit.groups){tip('分组数量已达上限');return;}
+  const id='g'+Date.now().toString(36);
+  layoutData.layout.groups.push({id,title:'新分组',rules:[],multi:false});
+  layoutSel=id;layoutDirty=true;renderLayout();markLayoutDirty();
+  $('#ldName').focus();$('#ldName').select();
+};
+$('#btnDelGroup').onclick=()=>{
+  const g=layoutData?.layout.groups.find(x=>x.id===layoutSel);
+  if(!g||layoutData.layout.groups.length<=1)return;
+  if(!confirm(`删除分组「${g.title}」？组内频道会回落到其它分组，不会丢台。`))return;
+  const i=layoutData.layout.groups.indexOf(g);
+  layoutData.layout.groups.splice(i,1);
+  layoutSel=layoutData.layout.groups[Math.max(0,i-1)]?.id||null;
+  layoutDirty=true;renderLayout();markLayoutDirty();
+};
+$('#ldName').oninput=e=>{
+  const g=layoutData?.layout.groups.find(x=>x.id===layoutSel);if(!g)return;
+  const v=e.target.value.slice(0,layoutData.limit.title);
+  if(e.target.value!==v)e.target.value=v;
+  g.title=v;layoutDirty=true;markLayoutDirty();
+  const li=$('#layoutGroupList').querySelector(`[data-id="${g.id}"] b`);if(li)li.textContent=v||'（未命名）';
+  $('#ldTitle').textContent=v||'（未命名）';
+};
+$('#ldMulti').onchange=e=>{const g=layoutData?.layout.groups.find(x=>x.id===layoutSel);if(!g)return;g.multi=e.target.checked;layoutDirty=true;renderLayout();markLayoutDirty();recountLayout();};
+$('#btnAddRule').onclick=()=>{
+  const g=layoutData?.layout.groups.find(x=>x.id===layoutSel);if(!g)return;
+  const type=$('#ruleType').value, raw=$('#ruleValue').value.trim();
+  let rule;
+  if(type==='orig_group'){if(!raw){tip('请填写上游分组名');return;}rule={type:'orig_group',value:raw};}
+  else if(type==='match_name'){if(!raw){tip('请填写关键词');return;}rule={type:'match',field:'name',op:'contains',value:raw};}
+  else if(type==='match_num'){if(!raw){tip('请填写台号');return;}rule={type:'match',field:'num',op:'equals',value:raw};}
+  else rule={type:'flag',flag:type==='flag_4k'?'is_4k':'back'};
+  if(g.rules.some(r=>JSON.stringify(r)===JSON.stringify(rule))){tip('这条规则已存在');return;}
+  g.rules.push(rule);layoutDirty=true;$('#ruleValue').value='';
+  renderLayout();markLayoutDirty();recountLayout();
+};
+$('#ruleType').onchange=()=>{
+  const needsValue=!$('#ruleType').value.startsWith('flag_');
+  $('#ruleValue').hidden=!needsValue;
+  $('#ruleHint').textContent=needsValue?'填写后按规则匹配频道；保存时会校验。':'这条规则不需要填写内容。';
+};
+$('#btnSaveLayout').onclick=async()=>{
+  if(!layoutData||layoutSaving)return;
+  const bad=layoutData.layout.groups.find(g=>!g.title.trim());
+  if(bad){layoutNotice('有分组还没有名字，请先填写。','error');layoutSel=bad.id;renderLayout();return;}
+  layoutSaving=true;formMessage('#layoutMsg','保存中…');
+  try {
+    await request('/api/layout',{method:'POST',body:layoutData.layout});
+    layoutDirty=false;formMessage('#layoutMsg','已保存，下次成功更新后生效');
+    await loadLayout();
+  } catch(e){formMessage('#layoutMsg','保存失败：'+e.message,'error');layoutNotice('保存失败：'+e.message,'error');}
+  finally {layoutSaving=false;}
+};
+$('#btnSeedReset').onclick=async()=>{
+  if(!confirm('恢复成上游原版的 11 个分组？当前自定义的分组名、顺序与规则都会丢弃。'))return;
+  layoutSaving=true;formMessage('#layoutMsg','正在恢复…');
+  try {
+    const data=await request('/api/layout');
+    const seed={version:1,seeded_from:'orig',groups:data.orig_groups.map((t,i)=>({id:'g'+(i+1),title:t,rules:[{type:'orig_group',value:t}],multi:false})),hide:[],order:[],renumber:false};
+    await request('/api/layout',{method:'POST',body:seed});
+    formMessage('#layoutMsg','已恢复为上游原版分组，下次更新生效');
+    await loadLayout();
+  } catch(e){formMessage('#layoutMsg','恢复失败：'+e.message,'error');}
+  finally {layoutSaving=false;}
+};
+$('#btnCopyMine').onclick=()=>{const el=$('#mineAddr');if(el.value)copy(el.value,el);else tip('先生成一次清单');};
 
 let statusData=null, statusSeq=0, statusOnline=false, updateBusy=false;
 let scheduleDirty=false, scheduleSaving=false, outputDirty=false, outputSaving=false, updateResult='';
@@ -598,6 +771,8 @@ $('#outputForm').onsubmit=async e=>{
   finally {outputSaving=false;renderStatus();refreshStatus();}
 };
 
+$$('.vbtn').forEach(b=>{const on=b.dataset.view===view;b.classList.toggle('on',on);b.setAttribute('aria-pressed',String(on));});
+notice('#viewHint',viewHint[view]);
 idle('选台，即可开始观看',true);
 showProfile();route();
 if(page!=='sched')refreshStatus();

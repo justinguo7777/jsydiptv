@@ -166,5 +166,126 @@ class Generations(unittest.TestCase):
         self.assertIn('sd', {p.attrib['channel'] for p in ET.parse(out/'orig_epg.xml').findall('programme')})
 
 
+class MineLayout(unittest.TestCase):
+    """第三套（自定义分组）必须只影响自己，不能动①②两套。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.etc = Path(self.tmp.name)/'etc'
+        self.etc.mkdir()
+        self.data = Path(self.tmp.name)/'data'
+        self.data.mkdir()
+        self.enter(patch.multiple(app, DATA=str(self.data), PKGVAR=self.tmp.name, PKGETC=str(self.etc),
+                                  log=lambda *a, **k: None))
+        self.enter(patch.object(app, 'ordered_hosts', return_value=['fixture.invalid:6610']))
+        self.enter(patch.object(app, 'validate_live', return_value=(True, {'live':'1/1', 'sample':1})))
+        self.enter(patch.object(app, 'probe_uhd'))
+        day = datetime.now(app.TZ8).replace(hour=0, minute=0, second=0, microsecond=0)
+        midnight = int((day + timedelta(days=1)).timestamp())
+        self.channels = [
+            dict(uuid='cctv1', name='CCTV-1', num='1', group='央视', district='320500',
+                 code='C1', cp='gitv', logo='', back=1, mc='', otypes=['央视']),
+            dict(uuid='cctv5', name='CCTV-5', num='5', group='央视', district='320500',
+                 code='C5', cp='gitv', logo='', back=1, mc='', otypes=['央视', '体育']),
+            dict(uuid='sz', name='苏州新闻', num='101', group='地方', district='320500',
+                 code='SZ', cp='gitv', logo='', back=1, mc='', otypes=['本地']),
+            dict(uuid='tv', name='某卫视', num='30', group='卫视', district='320500',
+                 code='TV', cp='gitv', logo='', back=0, mc='', otypes=['卫视'])]
+        self.programs = [dict(uuid='cctv1', title='跨午夜节目', start=midnight-1800, end=midnight+1800)]
+        self.enter(patch.object(app, 'collect',
+                                side_effect=lambda *a, **k: (self.channels, self.programs)))
+        self.cfg = dict(app.DEFAULTS, district='320500', localize_logo=False)
+
+    def enter(self, mgr):
+        obj = mgr.__enter__()
+        self.addCleanup(mgr.__exit__, None, None, None)
+        return obj
+
+    def write_layout(self, **changes):
+        base = app.seed_layout(self.channels)
+        base['groups'].insert(0, {'id': 'fav', 'title': '我的常看', 'multi': False,
+                                  'rules': [{'type': 'channel', 'uuid': 'sz'}]})
+        base.update(changes)
+        (self.etc/'layout.json').write_text(json.dumps(base, ensure_ascii=False), encoding='utf-8')
+
+    def test_seed_matches_upstream_groups(self):
+        app.run_once(dict(self.cfg), 'http://fixture.invalid:18123')
+        out = Path(app._output_dir())
+        self.assertTrue((out/'mine.m3u8').is_file())
+        mine = json.loads((out/'mine.json').read_text())
+        self.assertEqual({g['name'] for g in mine['groups']}, {'央视', '本地', '卫视'})
+        self.assertEqual(sum(len(g['channels']) for g in mine['groups']), 4)
+        # 首次种子应写回配置，供用户接着改
+        saved = json.loads((self.etc/'layout.json').read_text())
+        self.assertEqual(saved['seeded_from'], 'orig')
+        self.assertEqual(len(saved['groups']), len(app.ORIG_GROUPS))
+
+    def test_custom_layout_keeps_other_two_untouched(self):
+        app.run_once(dict(self.cfg), 'http://fixture.invalid:18123')
+        out = Path(app._output_dir())
+        before = {n: (out/n).read_bytes() for n in
+                  ('iptv.m3u8', 'kodi.m3u', 'fongmi.m3u', 'epg.xml', 'orig.m3u8', 'orig.json')}
+        self.write_layout(hide=[{'type': 'match', 'field': 'num', 'op': 'equals', 'value': '30'}])
+        app.run_once(dict(self.cfg), 'http://fixture.invalid:18123')
+        out = Path(app._output_dir())
+        for name, data in before.items():
+            self.assertEqual((out/name).read_bytes(), data, name)
+        mine = (out/'mine.m3u8').read_text()
+        self.assertNotIn('某卫视', mine)
+        self.assertIn('group-title="我的常看"', mine)
+        self.assertLess(mine.index('我的常看'), mine.index('央视'))
+
+    def test_multi_group_and_renumber(self):
+        self.write_layout(renumber=True)
+        layout = app.load_layout() or json.loads((self.etc/'layout.json').read_text())
+        layout['groups'].append({'id': 'sport', 'title': '体育', 'multi': True,
+                                 'rules': [{'type': 'orig_group', 'value': '体育'}]})
+        entries, stats = app.apply_mine_layout(self.channels, layout,
+                                               {c['uuid']: c['otypes'] for c in self.channels})
+        self.assertEqual([(c['uuid'], g) for c, g in entries],
+                         [('sz', '我的常看'), ('cctv1', '央视'), ('cctv5', '央视'),
+                          ('tv', '卫视'), ('cctv5', '体育')])
+        self.assertEqual(stats['multi'], 1)
+        d = Path(self.tmp.name)/'mine'
+        app.write_mine_outputs(d, 'http://cdn.x/gitv', entries, 7, 'http://nas:18123', True, layout)
+        kodi = (d/'mine_kodi.m3u').read_text()
+        self.assertIn('${start:YmdHMS}', kodi)
+        self.assertIn('tvg-chno="1"', kodi)
+        ap = (d/'mine.m3u8').read_text()
+        self.assertIn('${(b)yyyyMMddHHmmss}', ap)
+        self.assertEqual((d/'mine_fongmi.m3u').read_text(), ap)
+
+    def test_empty_layout_falls_back_without_failing_update(self):
+        self.write_layout(hide=[{'type': 'flag', 'flag': 'back'},
+                                {'type': 'match', 'field': 'name', 'op': 'contains', 'value': '卫视'}])
+        meta = app.run_once(dict(self.cfg), 'http://fixture.invalid:18123')
+        self.assertEqual(meta['mine']['state'], 'fallback:empty')
+        mine = (Path(app._output_dir())/'mine.m3u8').read_text()
+        self.assertIn('#EXTINF', mine)
+
+    def test_validation_rejects_bad_layout(self):
+        cases = [
+            ({'groups': [{'id': 'x', 'title': 'A', 'rules': [{'type': 'match', 'field': 'name',
+                                                             'op': 'regex', 'value': '['}]}]}, '无效规则'),
+            ({'groups': [{'id': 'x', 'title': 'A'*25, 'rules': []}]}, '24 个字符'),
+            ({'groups': [{'id': 'x', 'title': 'A'}, {'id': 'x', 'title': 'B'}]}, '重复'),
+            ({'groups': [{'id': '有中文', 'title': 'A'}]}, '分组 id'),
+            ({'groups': [{'id': 'x', 'title': 'A'}]*51}, '不能超过'),
+            ({'groups': [{'id': 'x', 'title': 'A', 'rules': [{'type': 'nope'}]}]}, '无效规则'),
+        ]
+        for body, expect in cases:
+            with self.subTest(expect=expect):
+                _, err = app.validate_layout(body)
+                self.assertIn(expect, err)
+
+    def test_fongmi_exposes_three_sets(self):
+        app.run_once(dict(self.cfg), 'http://fixture.invalid:18123')
+        cfg = json.loads((Path(app._output_dir())/'fongmi.json').read_text())
+        self.assertEqual([l['name'] for l in cfg['lives']], ['智能分组', '原版分组', '自定义分组'])
+        self.assertEqual(cfg['lives'][0]['url'], 'http://fixture.invalid:18123/fongmi.m3u')
+        self.assertEqual(cfg['lives'][2]['url'], 'http://fixture.invalid:18123/mine_fongmi.m3u')
+
+
 ORIGINAL_PROBE = app.probe_uhd
 ORIGINAL_VALIDATE = app.validate_live
