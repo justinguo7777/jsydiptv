@@ -2644,6 +2644,44 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         "order": order, "channels": chs})
             return
 
+        if path == "/api/layout":
+            original = []
+            try:
+                with open(os.path.join(self.output_dir, "channels.json"), encoding="utf-8") as f:
+                    original = json.load(f)
+            except Exception:
+                self._json({"ok": False, "msg": "频道表尚未生成，请先执行一次更新"}, 404)
+                return
+            layout = load_layout()
+            seeded = False
+            if not isinstance(layout, dict) or not layout.get("groups"):
+                layout = seed_layout(original)
+                seeded = True
+            # 给界面用：每个分组当前命中几台、按什么顺序输出
+            member = {}
+            try:
+                with open(os.path.join(self.output_dir, "orig_member.json"), encoding="utf-8") as f:
+                    member = json.load(f)
+            except Exception:
+                member = {}
+            entries, stats = apply_mine_layout(original, layout, member)
+            hits = {}
+            for ch, title in entries:
+                hits[title] = hits.get(title, 0) + 1
+            titles = [g["title"] for g in layout["groups"]]
+            self._json({"ok": True, "layout": layout, "seeded": seeded,
+                        "stats": stats,
+                        "groups": [{"title": t, "hits": hits.get(t, 0),
+                                    "in_output": hits.get(t, 0) > 0} for t in titles]
+                                  + ([{"title": "其他", "hits": stats["ungrouped"],
+                                       "in_output": stats["ungrouped"] > 0}] if stats["ungrouped"] else []),
+                        "orig_groups": [g for _a, g in ORIG_GROUPS],
+                        "limit": {"groups": MINE_GROUP_LIMIT, "title": MINE_TITLE_LIMIT,
+                                  "rules": MINE_RULE_LIMIT},
+                        "outputs": {"m3u": "/mine.m3u8", "kodi": "/mine_kodi.m3u",
+                                    "fongmi": "/mine_fongmi.m3u", "json": "/mine.json"}})
+            return
+
         if path == "/api/epg":
             uid = qs.get("uuid", [""])[0]
             if not uid:
@@ -2861,44 +2899,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             res = do_update(cfg, self._self_base(), reason="api")
             self._json(res, 200 if res.get("ok") else 500)
             return
-        if path == "/api/layout":
-            original = []
-            try:
-                with open(os.path.join(self.output_dir, "channels.json"), encoding="utf-8") as f:
-                    original = json.load(f)
-            except Exception:
-                self._json({"ok": False, "msg": "频道表尚未生成，请先执行一次更新"}, 404)
-                return
-            layout = load_layout()
-            seeded = False
-            if not isinstance(layout, dict) or not layout.get("groups"):
-                layout = seed_layout(original)
-                seeded = True
-            # 给界面用：每个分组当前命中几台、按什么顺序输出
-            member = {}
-            try:
-                with open(os.path.join(self.output_dir, "orig_member.json"), encoding="utf-8") as f:
-                    member = json.load(f)
-            except Exception:
-                member = {}
-            entries, stats = apply_mine_layout(original, layout, member)
-            hits = {}
-            for ch, title in entries:
-                hits[title] = hits.get(title, 0) + 1
-            titles = [g["title"] for g in layout["groups"]]
-            self._json({"ok": True, "layout": layout, "seeded": seeded,
-                        "stats": stats,
-                        "groups": [{"title": t, "hits": hits.get(t, 0),
-                                    "in_output": hits.get(t, 0) > 0} for t in titles]
-                                  + ([{"title": "其他", "hits": stats["ungrouped"],
-                                       "in_output": stats["ungrouped"] > 0}] if stats["ungrouped"] else []),
-                        "orig_groups": [g for _a, g in ORIG_GROUPS],
-                        "limit": {"groups": MINE_GROUP_LIMIT, "title": MINE_TITLE_LIMIT,
-                                  "rules": MINE_RULE_LIMIT},
-                        "outputs": {"m3u": "/mine.m3u8", "kodi": "/mine_kodi.m3u",
-                                    "fongmi": "/mine_fongmi.m3u", "json": "/mine.json"}})
-            return
-
         if u.path == "/api/layout":
             n = int(self.headers.get("Content-Length") or 0)
             if n <= 0 or n > 262144:
